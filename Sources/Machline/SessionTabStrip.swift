@@ -11,8 +11,8 @@ struct SessionTabStrip: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // The way back for a rail that has been put away: the button on the rail itself goes
-            // with it, so the pair that restores them lives here, where the chrome always is.
+            // The only toggle for either rail. It lives here because this row is always on screen,
+            // so the same control that puts a rail away is the one that brings it back.
             IconButton(
                 systemName: window.isSessionRailVisible ? "sidebar.leading" : "sidebar.left",
                 help: window.isSessionRailVisible

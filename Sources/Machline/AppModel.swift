@@ -30,7 +30,7 @@ final class AppModel: Identifiable {
     }
 
     private func loadPersistedSettings() {
-        recentProjects = recents.load()
+        allRecentProjects = recents.load()
         machineConfiguration = MachineConfiguration.read()
         loadAutoApproval()
         loadSlashCommands()
@@ -163,9 +163,11 @@ final class AppModel: Identifiable {
         return activeModel != model
     }
 
-    /// Recently opened projects, newest first.
-    private(set) var recentProjects: [URL] = []
+    /// Recently opened projects, newest first, minus the ones the operator removed.
+    var recentProjects: [URL] { allRecentProjects.filter { !hidden.contains($0) } }
+    private var allRecentProjects: [URL] = []
     private let recents = RecentProjects()
+    private let hidden = HiddenProjects.shared
 
     // MARK: Completions
 
@@ -878,7 +880,7 @@ final class AppModel: Identifiable {
 
     /// Re-reads the recent-project list, which another window may have added to.
     func loadRecentProjects() {
-        recentProjects = recents.load()
+        allRecentProjects = recents.load()
     }
 
     func open(workspace url: URL) {
@@ -890,8 +892,11 @@ final class AppModel: Identifiable {
         workspace = Workspace(url: url)
         git = GitPanelModel(workspace: url)
         git?.refresh()
+        // Opening a removed project is how it comes back: the operator asked for this directory by
+        // name, so hiding it from the list they are now looking at would be the app arguing.
+        hidden.show(url)
         recents.record(url)
-        recentProjects = recents.load()
+        allRecentProjects = recents.load()
         refreshHistory()
         buildFileIndex(for: url)
     }
@@ -900,27 +905,31 @@ final class AppModel: Identifiable {
     ///
     /// The project menu used to offer only what this app had opened, which on a fresh install is
     /// nothing — while the machine may hold eighty projects the CLI already knows about.
-    private(set) var knownProjects: [URL] = []
+    var knownProjects: [URL] { allKnownProjects.filter { !hidden.contains($0) } }
+    private var allKnownProjects: [URL] = []
 
     func loadKnownProjects() {
-        guard knownProjects.isEmpty else { return }
+        guard allKnownProjects.isEmpty else { return }
         Task { [history] in
             let known = await Task.detached(priority: .utility) {
                 history.knownWorkspaces().map(\.url)
             }.value
             await MainActor.run {
-                var seen = Set(self.recentProjects.map(\.standardizedFileURL))
-                var ordered = self.recentProjects
+                var seen = Set(self.allRecentProjects.map(\.standardizedFileURL))
+                var ordered = self.allRecentProjects
                 for url in known where seen.insert(url.standardizedFileURL).inserted {
                     ordered.append(url)
                 }
-                self.knownProjects = ordered
+                self.allKnownProjects = ordered
             }
         }
     }
 
     /// Recent work across every project, for a window with nothing open yet.
-    private(set) var homeProjects: [(workspace: URL, sessions: [HistoricalSession])] = []
+    var homeProjects: [(workspace: URL, sessions: [HistoricalSession])] {
+        allHomeProjects.filter { !hidden.contains($0.workspace) }
+    }
+    private var allHomeProjects: [(workspace: URL, sessions: [HistoricalSession])] = []
     private(set) var isLoadingHome = false
 
     private let homeCache = HomeCache()
@@ -933,11 +942,11 @@ final class AppModel: Identifiable {
     func loadHome() {
         guard !isLoadingHome else { return }
 
-        if homeProjects.isEmpty, let cached = homeCache.read() {
-            homeProjects = cached.projects.map { ($0.workspace, $0.sessions) }
+        if allHomeProjects.isEmpty, let cached = homeCache.read() {
+            allHomeProjects = cached.projects.map { ($0.workspace, $0.sessions) }
         }
 
-        isLoadingHome = homeProjects.isEmpty
+        isLoadingHome = allHomeProjects.isEmpty
         Task { [history, homeCache] in
             let found = await Task.detached(priority: .userInitiated) {
                 history.recentWork()
@@ -947,7 +956,7 @@ final class AppModel: Identifiable {
             await Task.detached(priority: .utility) { homeCache.write(snapshot) }.value
 
             await MainActor.run {
-                self.homeProjects = found
+                self.allHomeProjects = found
                 self.isLoadingHome = false
             }
         }
@@ -1123,14 +1132,29 @@ final class AppModel: Identifiable {
         }
     }
 
-    func forgetProject(_ url: URL) {
+    /// Takes a project out of every list the app shows, and keeps it out.
+    ///
+    /// Two stores, because the lists have two sources: the recent list is this app's own and is
+    /// simply forgotten, while the project menu also draws on the CLI's transcript directory, which
+    /// this app does not own and will not delete. The removal is recorded instead, and the lists
+    /// filter against it. Nothing on disk is touched — neither the project nor its conversations.
+    func removeProject(_ url: URL) {
         recents.forget(url)
-        recentProjects = recents.load()
+        allRecentProjects = recents.load()
+        hidden.hide(url)
     }
+
+    /// Puts every removed project back in the lists.
+    func restoreRemovedProjects() {
+        hidden.showAll()
+    }
+
+    /// How many projects are being kept out of the lists, for the control that offers them back.
+    var removedProjectCount: Int { hidden.count }
 
     func clearRecentProjects() {
         recents.clear()
-        recentProjects = []
+        allRecentProjects = []
     }
 
     /// Restarts the session so a launch-time change — a different model — takes effect.

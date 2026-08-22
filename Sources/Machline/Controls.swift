@@ -44,6 +44,12 @@ struct Select<Value: Hashable>: View {
     /// One line at the foot of the open menu describing what ⌘ does, so the shortcut is visible
     /// rather than folklore. Only drawn when `onCommandSelect` is set.
     var commandHint: String?
+    /// Right-click on a row. A list the operator maintains — the project list — takes entries out
+    /// this way. When absent, rows have no context menu at all.
+    var onRemove: ((Value) -> Void)?
+    /// What that menu item says. Named for what it removes from, since "Remove" alone reads like
+    /// it might delete the thing itself.
+    var removeTitle = "Remove"
 
     @State private var isOpen = false
     @State private var isHovering = false
@@ -78,7 +84,16 @@ struct Select<Value: Hashable>: View {
                 selection: selection,
                 isTechnical: isTechnical,
                 showsSearch: showsSearch,
-                commandHint: onCommandSelect == nil ? nil : commandHint
+                commandHint: onCommandSelect == nil ? nil : commandHint,
+                onRemove: onRemove.map { remove in
+                    { value in
+                        // The menu closes with the row it was opened on, so the list the operator
+                        // sees next is the shortened one.
+                        isOpen = false
+                        remove(value)
+                    }
+                },
+                removeTitle: removeTitle
             ) { value, wantsCommandAction in
                 if wantsCommandAction, let onCommandSelect {
                     onCommandSelect(value)
@@ -103,6 +118,8 @@ private struct SelectMenu<Value: Hashable>: View {
     let isTechnical: Bool
     let showsSearch: Bool?
     let commandHint: String?
+    let onRemove: ((Value) -> Void)?
+    let removeTitle: String
     /// The chosen option, and whether ⌘ was down when it was chosen.
     let onChoose: (Value, Bool) -> Void
 
@@ -129,7 +146,7 @@ private struct SelectMenu<Value: Hashable>: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(filtered.enumerated()), id: \.element.id) { index, option in
-                            SelectRow(
+                            let row = SelectRow(
                                 label: option.label,
                                 detail: option.detail,
                                 isSelected: option.value == selection,
@@ -139,6 +156,18 @@ private struct SelectMenu<Value: Hashable>: View {
                                 onChoose(option.value, NSEvent.isCommandHeld)
                             }
                             .id(index)
+
+                            // Attached only where there is something to put in it: an empty
+                            // context menu is a right-click that opens nothing.
+                            if let onRemove {
+                                row.contextMenu {
+                                    Button(removeTitle, role: .destructive) {
+                                        onRemove(option.value)
+                                    }
+                                }
+                            } else {
+                                row
+                            }
                         }
 
                         if filtered.isEmpty {

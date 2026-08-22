@@ -216,16 +216,16 @@ struct SessionRailView: View {
                 onCommandSelect: { path in
                     openInNewWindow(URL(fileURLWithPath: path))
                 },
-                commandHint: "⌘-click to open in a new window")
+                commandHint: "⌘-click to open in a new window · right-click to remove",
+                onRemove: { path in
+                    model.removeProject(URL(fileURLWithPath: path))
+                },
+                removeTitle: "Remove from Machline")
 
             Spacer(minLength: 0)
 
             IconButton(systemName: "plus", help: "Open a project (⌘O)") {
                 openProject()
-            }
-
-            IconButton(systemName: "sidebar.leading", help: "Hide the session rail (⌘⌥[)") {
-                window.toggleSessionRail()
             }
         }
         .padding(.horizontal, Theme.Space.md)

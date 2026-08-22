@@ -30,17 +30,9 @@ struct RunPanelView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 0) {
-                    // Outside the scroll would be a header, which this rail deliberately does not
-                    // have. One right-aligned control costs a row of nothing instead.
-                    HStack(spacing: 0) {
-                        Spacer(minLength: 0)
-                        IconButton(
-                            systemName: "sidebar.trailing", help: "Hide the run panel (⌘⌥])"
-                        ) {
-                            window.toggleRunPanel()
-                        }
-                    }
-                    .padding(.trailing, Theme.Space.xs)
+                    // No header row: the tab strip already carries a run-panel toggle that is
+                    // visible whether the panel is open or shut, so a second one here was a row of
+                    // chrome saying what the strip already says.
 
                     // What is happening now, at the top.
                     ContextSummary(model: model, isExpanded: $isUsageExpanded)

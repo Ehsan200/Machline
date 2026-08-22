@@ -72,7 +72,8 @@ struct HomeView: View {
                                 openWindow(
                                     id: "session",
                                     value: WindowTarget(workspace: url, isUnique: true))
-                            })
+                            },
+                            onRemove: { model.removeProject(url) })
                     }
                 }
 
@@ -80,6 +81,15 @@ struct HomeView: View {
                     Text("\(all.count - Self.chipLimit) more in the project menu")
                         .font(Theme.Typography.meta)
                         .foregroundStyle(Theme.Colors.subtle)
+                }
+
+                // Only shown when there is something to undo, and it says how much.
+                if model.removedProjectCount > 0 {
+                    QuietButton(
+                        title: "Show \(model.removedProjectCount) removed"
+                    ) {
+                        model.restoreRemovedProjects()
+                    }
                 }
             }
         }
@@ -242,6 +252,13 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
             .help("Open \(workspace.path)")
+            .contextMenu {
+                Button("Open") { model.open(workspace: workspace) }
+                Divider()
+                Button("Remove from Machline", role: .destructive) {
+                    model.removeProject(workspace)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(sessions) { session in
@@ -267,6 +284,7 @@ private struct ProjectChip: View {
     var detail: String?
     let onOpen: () -> Void
     let onOpenInNewWindow: () -> Void
+    let onRemove: () -> Void
 
     var body: some View {
         Pill(
@@ -280,6 +298,9 @@ private struct ProjectChip: View {
         .contextMenu {
             Button("Open") { onOpen() }
             Button("Open in New Window") { onOpenInNewWindow() }
+            Divider()
+            // Removes it from this app's lists only. Nothing on disk is touched.
+            Button("Remove from Machline", role: .destructive) { onRemove() }
         }
     }
 }
