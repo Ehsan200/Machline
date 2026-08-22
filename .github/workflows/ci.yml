@@ -7,9 +7,8 @@ on:
 
 jobs:
   test:
-    # macos-15 ships Xcode 16 / Swift 6.1, which cannot build this package: the SwiftUI and
-    # AppKit isolation this app relies on only type-checks cleanly from Swift 6.3 on. The runner
-    # tracks the toolchain the app is developed against rather than the other way round.
+    # The runner tracks the toolchain the app is developed against. macos-15 ships Xcode 16 and
+    # has never been tried against this package.
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5

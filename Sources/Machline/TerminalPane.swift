@@ -73,7 +73,11 @@ private struct TerminalRepresentable: NSViewRepresentable {
     /// nothing attached to it. Toggling repeatedly stacked up orphans — each holding the project
     /// directory open and, on a login shell, whatever its profile started.
     static func dismantleNSView(_ view: LocalProcessTerminalView, coordinator: Coordinator) {
-        coordinator.terminate(view)
+        // `dismantleNSView` is a nonisolated static requirement, but SwiftUI only ever tears a view
+        // down on the main thread and `view.process` is main-actor state. Asserting that here is
+        // what lets `terminate` stay isolated instead of reaching across actors — which older
+        // toolchains reject outright rather than warning about.
+        MainActor.assumeIsolated { coordinator.terminate(view) }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -81,6 +85,7 @@ private struct TerminalRepresentable: NSViewRepresentable {
     final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
         private var hasTerminated = false
 
+        @MainActor
         func terminate(_ view: LocalProcessTerminalView) {
             guard !hasTerminated else { return }
             hasTerminated = true

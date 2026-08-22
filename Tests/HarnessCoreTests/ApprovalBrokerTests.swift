@@ -19,18 +19,23 @@ struct ApprovalBrokerTests {
     }
 
     /// Speaks the wire protocol directly, standing in for the helper.
+    /// Asks the broker the way a helper would. Blocking, so it runs off the cooperative pool —
+    /// see `offCooperativePool`.
     static func ask(
         socketPath: String, command: String, helperDeadline: TimeInterval = 30
-    ) throws -> ApprovalDecision {
+    ) async throws -> ApprovalDecision {
         let request = ApprovalRequest(
             payload: bashPayload(command),
             helperPID: 1234,
             helperDeadline: Date().addingTimeInterval(helperDeadline))
-        let reply = try UnixSocket.request(
-            socketPath: socketPath,
-            message: try request.encoded(),
-            deadline: Date().addingTimeInterval(helperDeadline))
-        return try ApprovalDecision.decode(from: reply)
+        let message = try request.encoded()
+        return try await offCooperativePool {
+            let reply = try UnixSocket.request(
+                socketPath: socketPath,
+                message: message,
+                deadline: Date().addingTimeInterval(helperDeadline))
+            return try ApprovalDecision.decode(from: reply)
+        }
     }
 
     @Test("An allowlist rule resolves without troubling the operator", .timeLimit(.minutes(1)))
@@ -41,7 +46,7 @@ struct ApprovalBrokerTests {
         let events = try await broker.start()
         defer { Task { await broker.stop() } }
 
-        let decision = try Self.ask(socketPath: await broker.socketPath, command: "git status --short")
+        let decision = try await Self.ask(socketPath: await broker.socketPath, command: "git status --short")
         #expect(decision.verdict == .allow)
         #expect(decision.provenance == .allowlistRule)
 
@@ -63,7 +68,7 @@ struct ApprovalBrokerTests {
         _ = try await broker.start()
         defer { Task { await broker.stop() } }
 
-        let decision = try Self.ask(socketPath: await broker.socketPath, command: "rm -rf dist")
+        let decision = try await Self.ask(socketPath: await broker.socketPath, command: "rm -rf dist")
         #expect(decision.verdict == .deny)
         #expect(decision.provenance == .denylistRule)
         #expect(decision.reason == "Deletion is blocked in this workspace.")
@@ -76,7 +81,7 @@ struct ApprovalBrokerTests {
         defer { Task { await broker.stop() } }
 
         let socketPath = await broker.socketPath
-        let asking = Task.detached { try Self.ask(socketPath: socketPath, command: "curl https://example.com") }
+        let asking = Task.detached { try await Self.ask(socketPath: socketPath, command: "curl https://example.com") }
 
         for await event in events {
             if case .pending(let pending) = event {
@@ -103,7 +108,7 @@ struct ApprovalBrokerTests {
         defer { Task { await broker.stop() } }
 
         let socketPath = await broker.socketPath
-        let asking = Task.detached { try Self.ask(socketPath: socketPath, command: "rm -rf dist") }
+        let asking = Task.detached { try await Self.ask(socketPath: socketPath, command: "rm -rf dist") }
 
         let feedback = "Do not delete dist/, run the clean target instead."
         for await event in events {
@@ -131,7 +136,7 @@ struct ApprovalBrokerTests {
         let draining = Task { for await _ in events {} }
         defer { draining.cancel() }
 
-        let decision = try Self.ask(socketPath: await broker.socketPath, command: "curl https://example.com")
+        let decision = try await Self.ask(socketPath: await broker.socketPath, command: "curl https://example.com")
         #expect(decision.verdict == .deny)
         #expect(decision.provenance == .brokerTimeout)
     }
@@ -143,11 +148,16 @@ struct ApprovalBrokerTests {
         _ = try await broker.start()
         defer { Task { await broker.stop() } }
 
-        let reply = try UnixSocket.request(
-            socketPath: await broker.socketPath,
-            message: "this is not json",
-            deadline: Date().addingTimeInterval(15))
-        let decision = try ApprovalDecision.decode(from: reply)
+        // Off the pool, like every other round trip here: the broker answers from a `Task`, and
+        // blocking a cooperative thread while waiting for it deadlocks a small runner.
+        let socketPath = await broker.socketPath
+        let decision = try await offCooperativePool {
+            let reply = try UnixSocket.request(
+                socketPath: socketPath,
+                message: "this is not json",
+                deadline: Date().addingTimeInterval(15))
+            return try ApprovalDecision.decode(from: reply)
+        }
         #expect(decision.verdict == .deny)
         #expect(decision.provenance == .malformedPayload)
     }
@@ -160,7 +170,7 @@ struct ApprovalBrokerTests {
         let events = try await broker.start()
         defer { Task { await broker.stop() } }
 
-        _ = try Self.ask(socketPath: await broker.socketPath, command: "ls -la")
+        _ = try await Self.ask(socketPath: await broker.socketPath, command: "ls -la")
 
         for await event in events {
             if case .resolved(let request, let decision) = event {

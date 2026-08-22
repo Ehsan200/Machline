@@ -28,10 +28,27 @@ struct ApprovalHelperTests {
         Bundle.module.bundleURL.deletingLastPathComponent().appendingPathComponent("harness-approve")
     }
 
+    /// Spawns the helper and waits for it to finish.
+    ///
+    /// The wait blocks, and the broker on the other end answers from the cooperative pool, so the
+    /// blocking part runs on a thread of its own — see `offCooperativePool`. Without that, several
+    /// of these tests in parallel on a small CI runner hold every pool thread, the broker never
+    /// gets scheduled, and the helper denies on its own deadline.
     static func runHelper(
         payload: String,
         socketPath: String?,
         deadlineSeconds: Double = 30
+    ) async throws -> HelperRun {
+        try await offCooperativePool {
+            try runHelperBlocking(
+                payload: payload, socketPath: socketPath, deadlineSeconds: deadlineSeconds)
+        }
+    }
+
+    private static func runHelperBlocking(
+        payload: String,
+        socketPath: String?,
+        deadlineSeconds: Double
     ) throws -> HelperRun {
         let process = Process()
         process.executableURL = helperURL
@@ -83,29 +100,29 @@ struct ApprovalHelperTests {
     }
 
     @Test("Denies when no approval socket is configured", .timeLimit(.minutes(1)))
-    func deniesWithoutSocket() throws {
-        let run = try Self.runHelper(payload: Self.samplePayload, socketPath: nil)
+    func deniesWithoutSocket() async throws {
+        let run = try await Self.runHelper(payload: Self.samplePayload, socketPath: nil)
         try expectDenial(run)
         #expect(run.decision?.permissionDecisionReason.contains("no approval socket") == true)
     }
 
     /// The app crashing, or never having started, must not open the gate.
     @Test("Denies when the broker is not running", .timeLimit(.minutes(1)))
-    func deniesWhenBrokerUnreachable() throws {
-        let run = try Self.runHelper(
+    func deniesWhenBrokerUnreachable() async throws {
+        let run = try await Self.runHelper(
             payload: Self.samplePayload, socketPath: "/tmp/ah-nonexistent-\(UUID().uuidString.prefix(8)).sock")
         try expectDenial(run)
         #expect(run.decision?.permissionDecisionReason.contains("not running") == true)
     }
 
     @Test("Denies on an empty payload", .timeLimit(.minutes(1)))
-    func deniesOnEmptyPayload() throws {
-        try expectDenial(try Self.runHelper(payload: "", socketPath: "/tmp/whatever.sock"))
+    func deniesOnEmptyPayload() async throws {
+        try expectDenial(try await Self.runHelper(payload: "", socketPath: "/tmp/whatever.sock"))
     }
 
     @Test("Denies on an unparseable payload", .timeLimit(.minutes(1)))
-    func deniesOnGarbagePayload() throws {
-        try expectDenial(try Self.runHelper(payload: "not json at all", socketPath: "/tmp/whatever.sock"))
+    func deniesOnGarbagePayload() async throws {
+        try expectDenial(try await Self.runHelper(payload: "not json at all", socketPath: "/tmp/whatever.sock"))
     }
 
     @Test("Approves when the broker allows", .timeLimit(.minutes(1)))
@@ -117,7 +134,7 @@ struct ApprovalHelperTests {
         _ = try await broker.start()
         defer { Task { await broker.stop() } }
 
-        let run = try Self.runHelper(payload: Self.samplePayload, socketPath: await broker.socketPath)
+        let run = try await Self.runHelper(payload: Self.samplePayload, socketPath: await broker.socketPath)
         #expect(run.exitCode == 0)
         #expect(run.decision?.permissionDecision == "allow")
     }
@@ -139,7 +156,7 @@ struct ApprovalHelperTests {
         }
         defer { resolving.cancel() }
 
-        let run = try Self.runHelper(payload: Self.samplePayload, socketPath: await broker.socketPath)
+        let run = try await Self.runHelper(payload: Self.samplePayload, socketPath: await broker.socketPath)
         try expectDenial(run)
         #expect(run.decision?.permissionDecisionReason == feedback)
     }
@@ -154,7 +171,7 @@ struct ApprovalHelperTests {
     /// own deadline can end it. (Against the real broker this path is unreachable, because the
     /// broker refuses to outlive the helper — see `brokerWillNotOutliveTheHelper`.)
     @Test("The helper denies on its own deadline against a silent peer", .timeLimit(.minutes(1)))
-    func helperSelfDeniesOnDeadline() throws {
+    func helperSelfDeniesOnDeadline() async throws {
         let listener = try UnixSocket.Listener(path: ApprovalBrokerTests.temporarySocketPath())
         defer { listener.close() }
 
@@ -167,7 +184,7 @@ struct ApprovalHelperTests {
         }
         accepting.start()
 
-        let run = try Self.runHelper(
+        let run = try await Self.runHelper(
             payload: Self.samplePayload, socketPath: listener.path, deadlineSeconds: 3)
 
         try expectDenial(run)
@@ -191,7 +208,7 @@ struct ApprovalHelperTests {
         defer { draining.cancel() }
 
         let started = Date()
-        let decision = try ApprovalBrokerTests.ask(
+        let decision = try await ApprovalBrokerTests.ask(
             socketPath: await broker.socketPath, command: "echo hi", helperDeadline: 3)
 
         #expect(decision.verdict == .deny)
@@ -218,7 +235,7 @@ struct ApprovalHelperTests {
         }
         defer { stopping.cancel() }
 
-        let run = try Self.runHelper(
+        let run = try await Self.runHelper(
             payload: Self.samplePayload, socketPath: await broker.socketPath, deadlineSeconds: 5)
         try expectDenial(run)
     }

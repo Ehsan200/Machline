@@ -165,6 +165,13 @@ final class PromptTextView: NSTextView {
     weak var coordinator: PromptEditor.Coordinator?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // A key equivalent is offered to *every* view in the window before the focused one gets
+        // `keyDown`, so claiming these unconditionally took them from the shell pane as well: the
+        // terminal never saw ctrl-C, and the running command never got SIGINT. These chords belong
+        // to this editor only while this editor is where the typing is going.
+        guard window?.firstResponder === self else {
+            return super.performKeyEquivalent(with: event)
+        }
         guard event.modifierFlags.contains(.control),
               let characters = event.charactersIgnoringModifiers?.lowercased()
         else {

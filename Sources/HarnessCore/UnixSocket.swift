@@ -104,6 +104,19 @@ public enum UnixSocket {
         }
     }
 
+    /// Turns a write to a hung-up peer into an `EPIPE` error instead of a `SIGPIPE`.
+    ///
+    /// The default disposition of `SIGPIPE` terminates the process, and every write here is to a
+    /// peer that is *expected* to vanish: a helper that hit its own deadline and exited, an app
+    /// that was quit mid-approval. Without this, the broker answering a helper that has already
+    /// gone kills whatever is hosting it — which is how the test bundle died with signal 13, and
+    /// would just as happily have been the app.
+    static func disableSIGPIPE(descriptor: Int32) {
+        var enabled: Int32 = 1
+        setsockopt(
+            descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
+    }
+
     static func setReceiveTimeout(descriptor: Int32, seconds: TimeInterval) throws {
         var timeout = timeval(
             tv_sec: Int(seconds),
@@ -123,6 +136,7 @@ public enum UnixSocket {
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw Error.socketFailed(errno: errno) }
         defer { close(descriptor) }
+        disableSIGPIPE(descriptor: descriptor)
 
         let connected = withAddress(&address) { pointer, length in
             connect(descriptor, pointer, length)
@@ -154,6 +168,7 @@ public enum UnixSocket {
                 Darwin.close(candidate)
                 return nil
             }
+            UnixSocket.disableSIGPIPE(descriptor: candidate)
             descriptor = candidate
         }
 
@@ -229,7 +244,10 @@ public enum UnixSocket {
         /// Blocks until a client connects. Returns `nil` once the listener is closed.
         public func accept() -> Int32? {
             let client = Darwin.accept(descriptor, nil, nil)
-            return client >= 0 ? client : nil
+            guard client >= 0 else { return nil }
+            // The peer on this one is a short-lived helper that may exit before we answer it.
+            UnixSocket.disableSIGPIPE(descriptor: client)
+            return client
         }
 
         public func close() {

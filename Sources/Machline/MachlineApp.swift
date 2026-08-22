@@ -84,6 +84,11 @@ private struct NewWindowButtons: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
+        // Belt and braces behind the per-descriptor `SO_NOSIGPIPE`/`F_SETNOSIGPIPE` calls: this
+        // app writes to two things that can hang up under it — the agent's stdin and an approval
+        // helper's socket — and the default disposition of `SIGPIPE` is to kill the process. A
+        // write to a vanished peer should be an error to handle, never the end of the app.
+        signal(SIGPIPE, SIG_IGN)
     }
 }
 

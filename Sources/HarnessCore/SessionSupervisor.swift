@@ -57,6 +57,10 @@ public actor SessionSupervisor {
         process.standardInput = stdinPipe
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+        // A steer written to an agent that has already exited must fail as an error, not as a
+        // signal: the default `SIGPIPE` disposition would take the whole app down with it, from a
+        // race nobody can avoid — the operator pressing Return as the session ends.
+        fcntl(stdinPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         process.environment = configuration.resolvedEnvironment(inheriting: Self.inheritedEnvironment())
 
         let (stream, continuation) = AsyncStream<SupervisorEvent>.makeStream(bufferingPolicy: .unbounded)

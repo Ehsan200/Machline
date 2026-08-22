@@ -127,7 +127,7 @@ struct MCPProxyTests {
         _ = try server.receive()
         server.finish()
 
-        try await collected.waitForCount(2, timeout: 5)
+        try await collected.waitForMethods(["initialize", "tools/call"], timeout: 15)
         let exchanges = collected.values
 
         let initialize = try #require(exchanges.first { $0.method == "initialize" })
@@ -188,8 +188,26 @@ final class TrafficCollector: @unchecked Sendable {
     }
 
     func waitForCount(_ count: Int, timeout: TimeInterval) async throws {
+        try await wait(timeout: timeout) { $0.count >= count }
+    }
+
+    /// Waits for the exchanges the test actually names.
+    ///
+    /// Counting was the wrong condition: the pairing is asynchronous, so two exchanges having
+    /// arrived is no guarantee that *these* two have. On an unloaded machine they were always the
+    /// same two; under load the test read the collection a beat early and failed on a `nil` that
+    /// was about to be filled in.
+    func waitForMethods(_ methods: [String], timeout: TimeInterval) async throws {
+        try await wait(timeout: timeout) { exchanges in
+            methods.allSatisfy { method in exchanges.contains { $0.method == method } }
+        }
+    }
+
+    private func wait(
+        timeout: TimeInterval, until condition: ([MCPExchange]) -> Bool
+    ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
-        while values.count < count, Date() < deadline {
+        while !condition(values), Date() < deadline {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
     }

@@ -12,6 +12,11 @@ import HarnessCore
 // it cancels the hook and runs the command (Finding 1) — so silence here is not a stall,
 // it is an unapproved execution. Every error path therefore prints `deny` and exits 0.
 
+// The runtime can close this helper's stdout the moment it stops caring about the answer, and a
+// `SIGPIPE` on the way out would look to the runtime like a hook that failed rather than one that
+// decided. Errors are handled below; signals are not.
+signal(SIGPIPE, SIG_IGN)
+
 let environment = ProcessInfo.processInfo.environment
 
 /// Must stay strictly below the `timeout` configured on the hook itself, so that *we* end the wait
