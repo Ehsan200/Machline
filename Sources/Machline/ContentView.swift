@@ -131,9 +131,9 @@ struct ContentView: View {
 
     /// The result of a manual update check.
     ///
-    /// Machline is ad-hoc signed, so there is no updater here — the banner reports what exists and
-    /// opens the release page. Replacing a running app with an unverified download is the one
-    /// thing an update mechanism must not do.
+    /// The check is asked for, but everything after it is not: a new release downloads on its own
+    /// and installs itself, and the banner is what makes that visible — and cancellable — while it
+    /// happens. Nothing is installed that has not matched the digest GitHub published.
     @ViewBuilder
     private func updateBanner(_ outcome: UpdateCheck.Outcome) -> some View {
         HStack(spacing: Theme.Space.md) {
@@ -196,14 +196,30 @@ struct ContentView: View {
 
         case .finished(let file):
             HStack(spacing: Theme.Space.sm) {
-                Text(file.lastPathComponent)
-                    .font(Theme.Typography.monoMeta)
-                    .foregroundStyle(Theme.Colors.subtle)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                QuietButton(title: "Show in Finder") { model.revealDownloadedUpdate() }
-                QuietButton(title: "Open", role: .primary) { model.openDownloadedUpdate() }
+                if model.canInstallUpdate {
+                    // Only reached with a session mid-turn: the install is otherwise automatic.
+                    Text("Downloaded — installing quits this session.")
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                    QuietButton(title: "Show in Finder") { model.revealDownloadedUpdate() }
+                    QuietButton(title: "Install and Relaunch", role: .primary) {
+                        model.installUpdate()
+                    }
+                } else {
+                    Text(file.lastPathComponent)
+                        .font(Theme.Typography.monoMeta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    QuietButton(title: "Show in Finder") { model.revealDownloadedUpdate() }
+                    QuietButton(title: "Open", role: .primary) { model.openDownloadedUpdate() }
+                }
             }
+
+        case .installing:
+            Text("Installing \(release.version) — Machline will reopen.")
+                .font(Theme.Typography.meta)
+                .foregroundStyle(Theme.Colors.subtle)
 
         case .failed(let message):
             HStack(spacing: Theme.Space.sm) {

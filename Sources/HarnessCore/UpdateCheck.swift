@@ -2,13 +2,14 @@ import Foundation
 
 /// Looks for a newer release on GitHub.
 ///
-/// Deliberately a *check*, not an updater. Sparkle-style self-replacement is only safe when the
-/// downloaded bundle can be verified against an identity the operating system trusts, and Machline
-/// is ad-hoc signed — so an updater here would swap the running app for a download nothing
-/// vouched for. This reports what exists and hands the operator the release page.
+/// The first step of the update path: this reports what exists, `ReleaseDownload` fetches it and
+/// checks it against the digest GitHub published, and `UpdateInstaller` puts it in place. There is
+/// no trusted signing identity behind any of it — the app is ad-hoc signed — so that digest is the
+/// only thing standing between a release and the bundle it replaces, and it is checked before
+/// anything is installed.
 ///
-/// It is also the only outbound network request the app makes, which is why it is opt-in rather
-/// than on by default.
+/// This is also the only outbound network request the app makes, which is why it is asked for
+/// rather than run on a timer.
 public struct UpdateCheck: Sendable {
 
     /// A file attached to the release — for this project, the disk image the workflow builds.

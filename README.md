@@ -16,9 +16,14 @@ Download the DMG from [Releases](https://github.com/Ehsan200/Machline/releases),
 Applications, then **right-click → Open** the first time you run each version.
 
 Builds are ad-hoc signed and not notarized, so macOS refuses them on first launch anywhere but the
-machine that built them. That is also why there is no self-updater: **Check for Updates…** in the
-application menu — or the version badge beside the tabs — tells you what exists, downloads the disk
-image, and leaves installing it to you.
+machine that built them — hence the right-click.
+
+After that it updates itself. **Check for Updates…** in the application menu — or the version badge
+beside the tabs — asks GitHub what exists; a newer release then downloads on its own, is checked
+against the digest GitHub published for it, replaces this bundle, and reopens. The check is the only
+part that is automatic-once-asked-for: nothing is polled on a timer, and a download that does not
+match its digest is discarded rather than installed. If a session is mid-turn, the build waits and
+the banner offers **Install and Relaunch** instead, since installing means quitting.
 
 To build it yourself, see [Developing](#developing).
 

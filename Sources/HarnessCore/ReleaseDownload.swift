@@ -3,10 +3,11 @@ import Foundation
 
 /// Fetches a release's build without sending the operator to a browser.
 ///
-/// Still not an updater, and for the same reason `UpdateCheck` is not one: this app is ad-hoc
-/// signed, so nothing here may replace the running bundle with a download the system has not
-/// vouched for. What it does is remove the errand — the disk image lands in Downloads, verified
-/// against the digest GitHub published, and the operator installs it themselves.
+/// The digest check is what the rest of the update path stands on: this app is ad-hoc signed, so
+/// the system vouches for nothing, and the only thing that says these bytes are the release
+/// workflow's bytes is the SHA-256 GitHub published for them. A file that does not match never
+/// reaches `UpdateInstaller`. The disk image is kept in Downloads either way, so an install that
+/// goes wrong leaves something to install by hand.
 public struct ReleaseDownload: Sendable {
 
     public enum Failure: Error, Sendable, Equatable {

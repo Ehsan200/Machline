@@ -498,6 +498,12 @@ final class AppModel: Identifiable {
             await MainActor.run {
                 self.updateOutcome = outcome
                 self.isCheckingForUpdates = false
+                // The answer to "is there a new version" is only ever followed by "then get it",
+                // so the transfer starts itself. Nothing is replaced until it has arrived and
+                // matched its digest, and the banner can still cancel it.
+                if case .available(let release) = outcome, release.asset != nil {
+                    self.downloadUpdate(release)
+                }
             }
         }
     }
@@ -513,12 +519,15 @@ final class AppModel: Identifiable {
     /// Where the new build has got to.
     ///
     /// Downloading it here rather than in a browser is the whole point: the operator asked for an
-    /// update, and being handed a web page instead is an errand. What this still will not do is
-    /// replace the running app — see `ReleaseDownload`.
+    /// update, and being handed a web page instead is an errand. `finished` is the same errand one
+    /// step later, so it is only where a build stops when the app cannot replace itself — see
+    /// `UpdateInstaller`.
     enum UpdateDownload: Equatable {
         case idle
         case running(Double)
         case finished(URL)
+        /// The swap script is running and the app is quitting; it comes back on the new version.
+        case installing
         case failed(String)
     }
 
@@ -557,6 +566,7 @@ final class AppModel: Identifiable {
                 await MainActor.run {
                     self?.updateDownload = .finished(file)
                     self?.updateDownloadTask = nil
+                    self?.installUpdateIfUnattended()
                 }
             } catch {
                 publish.finish()
@@ -588,10 +598,69 @@ final class AppModel: Identifiable {
         NSWorkspace.shared.activateFileViewerSelecting([file])
     }
 
-    /// Opens the disk image, which is as far as this goes — the operator drags the app across.
+    /// Opens the disk image, for the build that cannot replace itself — the operator drags it over.
     func openDownloadedUpdate() {
         guard case .finished(let file) = updateDownload else { return }
         NSWorkspace.shared.open(file)
+    }
+
+    // MARK: Installing it
+
+    /// Whether this build is running from a bundle it can replace.
+    ///
+    /// False under `swift run` and for a bare binary, where there is no `.app` to swap and the
+    /// download is only ever something to hand over.
+    var canInstallUpdate: Bool { UpdateInstaller.isInstallable }
+
+    /// Installs as soon as the download lands, unless a session is mid-turn.
+    ///
+    /// Installing means quitting, and quitting on top of a running agent throws away the turn it
+    /// was in the middle of. So the automatic path is for an idle app; a busy one holds the build
+    /// and puts the decision on the banner, where the operator can see what it costs.
+    private func installUpdateIfUnattended() {
+        guard canInstallUpdate, !sessionState.isRunning else { return }
+        installUpdate()
+    }
+
+    /// Replaces this bundle with the downloaded build and relaunches.
+    ///
+    /// The swap itself happens after this process exits — see `UpdateInstaller` — so the quit is
+    /// part of the operation rather than something that follows it. A build that cannot replace
+    /// itself falls back to opening the disk image.
+    func installUpdate() {
+        guard case .finished(let file) = updateDownload else { return }
+        guard let installer = try? UpdateInstaller() else {
+            openDownloadedUpdate()
+            return
+        }
+
+        do {
+            try installer.install(from: file)
+        } catch {
+            updateDownload = .failed(Self.describe(installError: error))
+            return
+        }
+
+        updateDownload = .installing
+        // The script is already counting this process down, so nothing may delay the quit — a
+        // confirmation sheet here would be a dialog the update is waiting on.
+        NSApplication.shared.terminate(nil)
+    }
+
+    private static func describe(installError error: Error) -> String {
+        guard let failure = error as? UpdateInstaller.Failure else {
+            return "The update could not be installed."
+        }
+        switch failure {
+        case .notBundled:
+            return "This build is not running from an app bundle, so it cannot replace itself."
+        case .unpack(let message):
+            return "Could not open the downloaded build: \(message)"
+        case .noApplication(let message):
+            return message
+        case .launch(let message):
+            return "Could not start the installer: \(message)"
+        }
     }
 
     private static func describe(downloadError error: Error) -> String {
