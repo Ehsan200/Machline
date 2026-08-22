@@ -23,6 +23,12 @@ struct ComposerView: View {
             Hairline()
             controlFooter
         }
+        // The bands are not equal. If the composer is ever given less height than it asks for —
+        // a short window, a remembered height from a larger one — the typing area is the part
+        // that should shrink. The strip says what the session is doing and the footer holds Steer,
+        // the model picker, and the shell toggle; losing either off the bottom edge leaves an app
+        // that looks like its controls have gone.
+        .layoutPriority(1)
         .background(Theme.Colors.panel)
     }
 
@@ -137,7 +143,7 @@ struct ComposerView: View {
                     .allowsHitTesting(false)
             }
         }
-        .frame(maxHeight: .infinity)
+        .frame(minHeight: 44, maxHeight: .infinity)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) { subagentNotice }
         // Files dropped here become `@` mentions, the same shape the agent reads a path from.

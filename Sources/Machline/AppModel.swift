@@ -98,6 +98,24 @@ final class AppModel: Identifiable {
         return enforcedMachineConfiguration.deniesBashCommand(command)
     }
 
+    /// Opens `~/.claude/settings.json` in whatever handles it, so the rules can be edited where
+    /// they actually live. Machline does not rewrite that file: it is the operator's, it is shared
+    /// with every other Claude session on this machine, and reformatting it behind their back to
+    /// delete one line is not a trade worth making.
+    func openMachineSettings() {
+        let url = MachineConfiguration.defaultSettingsURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Re-reads the machine's rules, for after they have been edited by hand.
+    func reloadMachineConfiguration() {
+        machineConfiguration = MachineConfiguration.read()
+    }
+
     struct AuditEntry: Identifiable {
         let id = UUID()
         let at: Date

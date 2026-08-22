@@ -102,6 +102,9 @@ enum Theme {
         static let embeddedDiffMaxHeight: CGFloat = 260
         static let toolOutputMaxHeight: CGFloat = 220
 
+        /// The strip of conversation that stays visible however tall the composer is dragged.
+        static let timelineMinHeight: CGFloat = 120
+
         static let windowMinWidth: CGFloat = 1180
         static let windowMinHeight: CGFloat = 760
 

@@ -27,10 +27,7 @@ and is the type a UI binds to.
   Images pasted into a prompt are shown as the picture rather than as the CLI's `[Image: source:
   …]` path text, in both the live timeline and a resumed session's replay.
 
-See [`PARITY.md`](PARITY.md) for what is still missing against the reference setup this interface
-is modelled on.
-
-322 tests: 309 offline (archived CLI transcripts, real throwaway repositories, and a bundled
+331 tests: 318 offline (archived CLI transcripts, real throwaway repositories, and a bundled
 JSON-RPC server), 13 opt-in live tests that drive the real binary. **The engine is tested; the UI
 is not** — the views compile and the app launches, but no automated test exercises them.
 
@@ -138,7 +135,7 @@ probe-verified and guarded by tests:
   companion — but both are emitted only in **sealed** mode. Sessions default to **inherited**,
   where `~/.claude` loads exactly as it would in a terminal and ambient MCP servers join
   unannounced. The approval gate is unaffected either way: the `PreToolUse` hook goes in through
-  `--settings`, which is independent of setting sources. See `PARITY.md` and PRD §3.2.
+  `--settings`, which is independent of setting sources.
 - stdout is **not** strictly JSONL — a library log line can appear mid-stream — so a line that fails
   to parse is reported and skipped, never fatal.
 - Variadic flags (`--tools`, `--allowedTools`, `--disallowedTools`) **swallow the next flag** when

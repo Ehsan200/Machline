@@ -75,25 +75,36 @@ struct CenterStageView: View {
             ResizeHandle(
                 onDrag: { translation in
                     // Dragging up grows the composer, so the delta is inverted.
-                    let ceiling = max(
-                        Theme.Layout.composerMinHeight,
-                        availableHeight * Theme.Layout.composerMaxFraction)
                     draggedHeight = min(
-                        ceiling,
+                        composerCeiling(availableHeight: availableHeight),
                         max(Theme.Layout.composerMinHeight, composerHeight - translation))
                 },
                 onEnd: {
                     if let draggedHeight { storedComposerHeight = draggedHeight }
                     draggedHeight = nil
+                },
+                onReset: {
+                    draggedHeight = nil
+                    storedComposerHeight = Theme.Layout.composerHeight
                 })
 
             ComposerView(model: model)
                 .frame(height: min(
-                    composerHeight,
-                    max(Theme.Layout.composerMinHeight,
-                        availableHeight * Theme.Layout.composerMaxFraction)))
+                    composerHeight, composerCeiling(availableHeight: availableHeight)))
         }
         .background(Theme.Colors.canvas)
+    }
+
+    /// The tallest the composer may be in the space actually available.
+    ///
+    /// Two ceilings, whichever is lower: the share of the window it may occupy, and whatever is
+    /// left after the timeline keeps a usable strip. A remembered height is *remembered* — it
+    /// outlives the window it was chosen in, and a window later opened smaller must not let it
+    /// push the composer's own controls past the bottom edge.
+    private func composerCeiling(availableHeight: CGFloat) -> CGFloat {
+        let share = availableHeight * Theme.Layout.composerMaxFraction
+        let leavingRoomForTheTimeline = availableHeight - Theme.Layout.timelineMinHeight
+        return max(Theme.Layout.composerMinHeight, min(share, leavingRoomForTheTimeline))
     }
 
     private var terminalHeight: CGFloat { draggedTerminalHeight ?? storedTerminalHeight }

@@ -87,8 +87,11 @@ struct SessionRailView: View {
             count: "· \(model.archivedSessions.count)",
             isExpanded: $isArchiveExpanded
         ) {
-            VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                ForEach(model.archivedSessions) { session in
+            // Capped *and* scrollable. A height cap on its own does not bound a list, it hides
+            // the end of one — the rows past 220pt were simply unreachable.
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    ForEach(model.archivedSessions) { session in
                     HStack(spacing: Theme.Space.sm) {
                         Text(session.title)
                             .font(Theme.Typography.meta)
@@ -106,10 +109,12 @@ struct SessionRailView: View {
                             pendingDelete = session
                         }
                     }
+                    }
                 }
+                .padding(.horizontal, Theme.Space.railPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, Theme.Space.railPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollContentBackground(.hidden)
         }
         .frame(maxHeight: isArchiveExpanded ? 220 : nil)
     }
@@ -467,19 +472,23 @@ struct SessionRailView: View {
             count: model.auditLog.isEmpty ? nil : "· \(model.auditLog.count)",
             isExpanded: $isAuditExpanded
         ) {
-            VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                if model.auditLog.isEmpty {
-                    Text("No approvals yet.")
-                        .font(Theme.Typography.meta)
-                        .foregroundStyle(Theme.Colors.subtle)
-                } else {
-                    ForEach(model.auditLog.prefix(12)) { entry in
-                        AuditRow(entry: entry)
+            // Same rule as everywhere else: what can grow past its box scrolls inside it.
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    if model.auditLog.isEmpty {
+                        Text("No approvals yet.")
+                            .font(Theme.Typography.meta)
+                            .foregroundStyle(Theme.Colors.subtle)
+                    } else {
+                        ForEach(model.auditLog.prefix(12)) { entry in
+                            AuditRow(entry: entry)
+                        }
                     }
                 }
+                .padding(.horizontal, Theme.Space.railPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, Theme.Space.railPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollContentBackground(.hidden)
         }
         .frame(maxHeight: isAuditExpanded ? 260 : nil)
     }

@@ -9,6 +9,10 @@ import SwiftUI
 struct ApprovalsPanel: View {
     @Bindable var model: AppModel
 
+    /// The machine's rule list is folded away until asked for: it is long, it is not ours, and the
+    /// headline above it already says what it does.
+    @State private var isMachineListExpanded = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             isolationSection
@@ -221,12 +225,17 @@ struct ApprovalsPanel: View {
     ///
     /// With machine config inherited, the CLI also reads `~/.claude/settings.json`, and a `deny`
     /// there outranks this gate: approve the command here and the runtime refuses it anyway, with
-    /// nothing on screen explaining why. Listing them is the explanation.
+    /// nothing on screen explaining why.
+    ///
+    /// Folded away by default, and never just a list. Seventeen red lines nobody can act on is a
+    /// wall, not an explanation — so the headline says what they do, and the two things that
+    /// actually change the outcome sit next to it: edit them where they live, or run sessions
+    /// sealed so they do not load at all.
     @ViewBuilder
     private var machineSection: some View {
         let configuration = model.enforcedMachineConfiguration
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            HStack {
+            HStack(spacing: Theme.Space.sm) {
                 Text("From ~/.claude")
                     .font(Theme.Typography.control)
                     .foregroundStyle(Theme.Colors.muted)
@@ -235,6 +244,18 @@ struct ApprovalsPanel: View {
                     Text("\(configuration.denyRules.count) deny")
                         .font(Theme.Typography.monoMeta)
                         .foregroundStyle(Theme.Colors.error)
+                    Button {
+                        withAnimation(.easeOut(duration: 0.12)) { isMachineListExpanded.toggle() }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.Colors.subtle)
+                            .rotationEffect(.degrees(isMachineListExpanded ? 90 : 0))
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(isMachineListExpanded ? "Hide the rules" : "Show the rules")
                 }
             }
 
@@ -250,23 +271,46 @@ struct ApprovalsPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 if !configuration.denyRules.isEmpty {
-                    Text("These outrank this gate. Approving one of them here still ends in the "
-                        + "runtime refusing it — the agent is told the system blocked it.")
+                    Text("\(configuration.denyRules.count) rule(s) here outrank this gate: "
+                        + "approving one of them still ends in the runtime refusing it, and the "
+                        + "agent is told the system blocked it.")
                         .font(Theme.Typography.meta)
                         .foregroundStyle(Theme.Colors.warning)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    ForEach(configuration.denyRules, id: \.self) { rule in
-                        HStack(spacing: Theme.Space.sm) {
-                            Text("deny")
-                                .font(Theme.Typography.monoMeta)
-                                .foregroundStyle(Theme.Colors.error)
-                            Text(rule)
-                                .font(Theme.Typography.monoMeta)
-                                .foregroundStyle(Theme.Colors.text)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer(minLength: 0)
+                    HStack(spacing: Theme.Space.sm) {
+                        QuietButton(title: "Edit in settings.json") {
+                            model.openMachineSettings()
+                        }
+                        QuietButton(title: "Reload") { model.reloadMachineConfiguration() }
+                        QuietButton(title: "Run sealed") { model.isolation = .sealed }
+                        Spacer(minLength: 0)
+                    }
+
+                    Text("Machline does not rewrite that file — it is shared with every other "
+                        + "Claude session on this machine. “Run sealed” leaves it alone and stops "
+                        + "loading it instead, from the next session on.")
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if isMachineListExpanded {
+                        ForEach(configuration.denyRules, id: \.self) { rule in
+                            HStack(spacing: Theme.Space.sm) {
+                                Text("deny")
+                                    .font(Theme.Typography.monoMeta)
+                                    .foregroundStyle(Theme.Colors.error)
+                                Text(rule)
+                                    .font(Theme.Typography.monoMeta)
+                                    .foregroundStyle(Theme.Colors.text)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer(minLength: 0)
+                                IconButton(systemName: "doc.on.doc", help: "Copy this rule") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(rule, forType: .string)
+                                }
+                            }
                         }
                     }
                 }

@@ -159,6 +159,8 @@ struct ResizeHandle: View {
     let onDrag: (CGFloat) -> Void
     /// Called once when the drag finishes, for callers that persist the result.
     var onEnd: () -> Void = {}
+    /// Double-click. The way back from a size that was dragged somewhere unusable.
+    var onReset: () -> Void = {}
 
     @State private var isHovering = false
     @State private var isDragging = false
@@ -173,6 +175,7 @@ struct ResizeHandle: View {
         .frame(maxWidth: .infinity)
         .frame(height: 9)
         .contentShape(Rectangle())
+        .onTapGesture(count: 2, perform: onReset)
         .onHover { hovering in
             isHovering = hovering
             // The cursor is the only affordance a one-pixel divider has.

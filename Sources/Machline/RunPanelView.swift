@@ -15,10 +15,20 @@ struct RunPanelView: View {
     @State private var isGitExpanded = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // What is happening now, at the top.
+        // One scroll view over the whole rail, not one over the top half.
+        //
+        // The workbench sections used to sit outside it, pinned to the foot. Expanding one then
+        // grew a `VStack` taller than the window, and a `VStack` that overflows does it at *both*
+        // ends: the Approvals panel ran off the top of the rail and off the bottom at once, with
+        // no way to reach either. Anything that can grow has to be inside the scroll.
+        //
+        // The foot still reads as a foot: the content is held to at least the rail's own height,
+        // so the `Spacer` pushes the workbenches down while there is room, and simply scrolls once
+        // there is not.
+        GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(spacing: 0) {
+                    // What is happening now, at the top.
                     ContextSummary(model: model, isExpanded: $isUsageExpanded)
 
                     if !model.sessionChanges.isEmpty {
@@ -40,34 +50,33 @@ struct RunPanelView: View {
                             emptyNote("Open a project to use the Git workbench.")
                         }
                     }
+
+                    Spacer(minLength: 0)
+
+                    // Everything that is a workbench rather than a readout sits at the foot,
+                    // collapsed. These were eight equal-weight headings competing with the live
+                    // state above them.
+                    Hairline()
+
+                    DisclosureSection(
+                        title: "Approvals",
+                        count: model.autoApproval.isEnabled ? "· auto" : nil,
+                        isExpanded: $isApprovalsExpanded
+                    ) {
+                        ApprovalsPanel(model: model)
+                    }
+
+                    DisclosureSection(
+                        title: "Completed agents",
+                        count: model.completedAgents.isEmpty ? nil : "· \(model.completedAgents.count)",
+                        isExpanded: $isCompletedExpanded
+                    ) {
+                        CompletedAgentsList(model: model)
+                    }
                 }
+                .frame(minHeight: geometry.size.height, alignment: .top)
             }
             .scrollContentBackground(.hidden)
-
-            Spacer(minLength: 0)
-
-            // Everything that is a workbench rather than a readout sits at the foot, collapsed.
-            // These were eight equal-weight headings competing with the live state above them.
-            VStack(spacing: 0) {
-                Hairline()
-
-                DisclosureSection(
-                    title: "Approvals",
-                    count: model.autoApproval.isEnabled ? "· auto" : nil,
-                    isExpanded: $isApprovalsExpanded
-                ) {
-                    ApprovalsPanel(model: model)
-                }
-
-                DisclosureSection(
-                    title: "Completed agents",
-                    count: model.completedAgents.isEmpty ? nil : "· \(model.completedAgents.count)",
-                    isExpanded: $isCompletedExpanded
-                ) {
-                    CompletedAgentsList(model: model)
-                }
-
-            }
         }
         .background(Theme.Colors.panel)
         // `/context`, `/permissions`, and `/mcp` answer here rather than in a sheet: this is where
