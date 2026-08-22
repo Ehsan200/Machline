@@ -197,7 +197,7 @@ struct ResumeArgumentTests {
         let args = configuration(
             resume: .init(sessionID: "abc-123")).arguments()
         #expect(!args.contains("--session-id"))
-        let index = try? #require(args.firstIndex(of: "--resume"))
+        let index = args.firstIndex(of: "--resume")
         #expect(index != nil)
         if let index { #expect(args[index + 1] == "abc-123") }
         #expect(!args.contains("--fork-session"))

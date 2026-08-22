@@ -36,7 +36,7 @@ struct SessionConfigurationTests {
     @Test("Sealed mode does not inherit operator settings")
     func settingSourcesSuppressedWhenSealed() {
         let args = arguments()
-        let index = try? #require(args.firstIndex(of: "--setting-sources"))
+        let index = args.firstIndex(of: "--setting-sources")
         #expect(index != nil)
         if let index { #expect(args[index + 1].isEmpty) }
     }

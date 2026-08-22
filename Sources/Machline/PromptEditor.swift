@@ -63,6 +63,9 @@ struct PromptEditor: NSViewRepresentable {
             self.parent = parent
         }
 
+        // `@MainActor` is explicit rather than inherited: on Swift 6.1 toolchains the
+        // representable's Coordinator is not inferred to be main-actor, and AppKit's setters are.
+        @MainActor
         func install(on textView: NSTextView) {
             textView.delegate = self
             textView.isRichText = false
@@ -95,6 +98,7 @@ struct PromptEditor: NSViewRepresentable {
         /// One input, but the parts that are not prose look like what they are: a command that the
         /// app or the CLI will act on, and a path that resolves to a file. Applied as temporary
         /// attributes so they never become part of the text that gets sent.
+        @MainActor
         static func highlightTokens(in textView: NSTextView) {
             guard let layoutManager = textView.layoutManager else { return }
             let text = textView.string
