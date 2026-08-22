@@ -75,13 +75,15 @@ enum Theme {
         /// Wider than the reference design allows: session titles are whole sentences here.
         static let railMaxWidth: CGFloat = 420
 
-        static let runPanelWidth: CGFloat = 312
+        static let runPanelWidth: CGFloat = 440
         static let runPanelMinWidth: CGFloat = 288
         /// The run panel holds the Git workbench, so it earns real width on demand — a hunk view
         /// at 344pt wraps every line. The timeline keeps priority until the operator drags.
-        static let runPanelMaxWidth: CGFloat = 760
+        static let runPanelMaxWidth: CGFloat = 1200
 
-        static let centerMinWidth: CGFloat = 480
+        /// Low enough that dragging a rail wide is not fought by the centre's own floor. Prose
+        /// gets narrow here, but that is the operator's choice to make with the divider.
+        static let centerMinWidth: CGFloat = 320
 
         /// The composer's default height. It is draggable from there — see `ResizeHandle`.
         static let composerHeight: CGFloat = 248
