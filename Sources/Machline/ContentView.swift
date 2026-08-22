@@ -135,9 +135,7 @@ struct ContentView: View {
                     .font(Theme.Typography.control)
                     .foregroundStyle(Theme.Colors.text)
                 Spacer(minLength: Theme.Space.md)
-                QuietButton(title: "Open release", role: .primary) {
-                    NSWorkspace.shared.open(release.url)
-                }
+                updateActions(for: release)
 
             case .upToDate:
                 Image(systemName: "checkmark.circle")
@@ -164,6 +162,65 @@ struct ContentView: View {
         .padding(.vertical, Theme.Space.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.Colors.panel)
+    }
+
+    /// The right-hand end of the update banner: fetch the build, watch it arrive, open it.
+    ///
+    /// A release published without a build attached still gets the page, because then the page is
+    /// genuinely the only thing there is.
+    @ViewBuilder
+    private func updateActions(for release: UpdateCheck.Release) -> some View {
+        switch model.updateDownload {
+        case .running(let fraction):
+            HStack(spacing: Theme.Space.sm) {
+                ProgressView(value: fraction)
+                    .progressViewStyle(.linear)
+                    .frame(width: 130)
+                Text("\(Int((fraction * 100).rounded()))%")
+                    .font(Theme.Typography.monoMeta)
+                    .foregroundStyle(Theme.Colors.subtle)
+                    .monospacedDigit()
+                QuietButton(title: "Cancel") { model.cancelUpdateDownload() }
+            }
+
+        case .finished(let file):
+            HStack(spacing: Theme.Space.sm) {
+                Text(file.lastPathComponent)
+                    .font(Theme.Typography.monoMeta)
+                    .foregroundStyle(Theme.Colors.subtle)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                QuietButton(title: "Show in Finder") { model.revealDownloadedUpdate() }
+                QuietButton(title: "Open", role: .primary) { model.openDownloadedUpdate() }
+            }
+
+        case .failed(let message):
+            HStack(spacing: Theme.Space.sm) {
+                Text(message)
+                    .font(Theme.Typography.meta)
+                    .foregroundStyle(Theme.Colors.error)
+                    .lineLimit(2)
+                QuietButton(title: "Open release") { NSWorkspace.shared.open(release.url) }
+                QuietButton(title: "Retry", role: .primary) { model.retryUpdateDownload() }
+            }
+
+        case .idle:
+            HStack(spacing: Theme.Space.sm) {
+                QuietButton(title: "Release notes") { NSWorkspace.shared.open(release.url) }
+                if let asset = release.asset {
+                    QuietButton(title: downloadTitle(for: asset), role: .primary) {
+                        model.downloadUpdate(release)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The size is on the button because it is what decides whether now is a good moment.
+    private func downloadTitle(for asset: UpdateCheck.Asset) -> String {
+        guard asset.byteCount > 0 else { return "Download" }
+        let megabytes = Double(asset.byteCount) / 1_000_000
+        return String(format: "Download (%.1f MB)", megabytes)
     }
 
     /// A failed approval channel or an observed fail-open means commands may be running ungated.

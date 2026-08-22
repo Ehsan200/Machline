@@ -472,7 +472,113 @@ final class AppModel: Identifiable {
         }
     }
 
-    func dismissUpdateNotice() { updateOutcome = nil }
+    func dismissUpdateNotice() {
+        updateOutcome = nil
+        cancelUpdateDownload()
+        updateDownload = .idle
+    }
+
+    // MARK: Downloading a release
+
+    /// Where the new build has got to.
+    ///
+    /// Downloading it here rather than in a browser is the whole point: the operator asked for an
+    /// update, and being handed a web page instead is an errand. What this still will not do is
+    /// replace the running app — see `ReleaseDownload`.
+    enum UpdateDownload: Equatable {
+        case idle
+        case running(Double)
+        case finished(URL)
+        case failed(String)
+    }
+
+    private(set) var updateDownload: UpdateDownload = .idle
+    private var updateDownloadTask: Task<Void, Never>?
+
+    /// The release currently on offer, when it has a build attached to download.
+    var downloadableRelease: UpdateCheck.Release? {
+        guard case .available(let release) = updateOutcome, release.asset != nil else { return nil }
+        return release
+    }
+
+    func downloadUpdate(_ release: UpdateCheck.Release) {
+        guard let asset = release.asset else { return }
+        guard updateDownloadTask == nil else { return }
+
+        updateDownload = .running(0)
+        // Progress arrives on whatever thread the transfer is running on, so it is funnelled
+        // through a stream and applied here. The newest value is the only one worth keeping — a
+        // buffer of stale percentages would just animate the bar through the past.
+        let (progress, publish) = AsyncStream<Double>.makeStream(bufferingPolicy: .bufferingNewest(1))
+
+        updateDownloadTask = Task { [weak self] in
+            let reader = Task { @MainActor [weak self] in
+                for await fraction in progress {
+                    guard let self, case .running = self.updateDownload else { continue }
+                    self.updateDownload = .running(fraction)
+                }
+            }
+            defer { reader.cancel() }
+
+            let download = ReleaseDownload(asset: asset)
+            do {
+                let file = try await download.run { publish.yield($0) }
+                publish.finish()
+                await MainActor.run {
+                    self?.updateDownload = .finished(file)
+                    self?.updateDownloadTask = nil
+                }
+            } catch {
+                publish.finish()
+                let message = Self.describe(downloadError: error)
+                await MainActor.run {
+                    // A cancelled download is not a failure to report; it is what was asked for.
+                    self?.updateDownload = Task.isCancelled ? .idle : .failed(message)
+                    self?.updateDownloadTask = nil
+                }
+            }
+        }
+    }
+
+    func cancelUpdateDownload() {
+        updateDownloadTask?.cancel()
+        updateDownloadTask = nil
+        if case .running = updateDownload { updateDownload = .idle }
+    }
+
+    /// Retry is a fresh attempt, not a resumed one: the partial file was already discarded.
+    func retryUpdateDownload() {
+        guard let release = downloadableRelease else { return }
+        updateDownload = .idle
+        downloadUpdate(release)
+    }
+
+    func revealDownloadedUpdate() {
+        guard case .finished(let file) = updateDownload else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([file])
+    }
+
+    /// Opens the disk image, which is as far as this goes — the operator drags the app across.
+    func openDownloadedUpdate() {
+        guard case .finished(let file) = updateDownload else { return }
+        NSWorkspace.shared.open(file)
+    }
+
+    private static func describe(downloadError error: Error) -> String {
+        guard let failure = error as? ReleaseDownload.Failure else {
+            return "The download did not finish."
+        }
+        switch failure {
+        case .http(let status):
+            return "GitHub answered \(status) for the download."
+        case .unreachable:
+            return "Could not reach GitHub to download the release."
+        case .digestMismatch:
+            return "The download did not match the checksum GitHub published, so it was discarded."
+        case .write(let message):
+            return "Could not save the download: \(message)"
+        }
+    }
 
     /// Whether the shell pane is showing.
     var isTerminalVisible = false

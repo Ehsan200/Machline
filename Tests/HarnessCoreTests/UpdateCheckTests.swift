@@ -52,4 +52,110 @@ struct UpdateCheckTests {
             return
         }
     }
+
+    // MARK: Downloadable asset
+
+    private func assets(_ json: String) throws -> [[String: Any]] {
+        try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] ?? []
+    }
+
+    /// This project publishes a disk image, so that is what the button must offer — not the first
+    /// file that happens to be attached.
+    @Test("The disk image is preferred over anything else attached")
+    func picksDiskImage() throws {
+        let raw = try assets(#"""
+        [{"name":"checksums.txt","browser_download_url":"https://e/c.txt","size":10},
+         {"name":"Machline-1.2.0.dmg","browser_download_url":"https://e/m.dmg","size":41000000,
+          "digest":"sha256:aaaa"},
+         {"name":"Machline.zip","browser_download_url":"https://e/m.zip","size":40000000}]
+        """#)
+
+        let asset = UpdateCheck.installer(in: raw)
+        #expect(asset?.name == "Machline-1.2.0.dmg")
+        #expect(asset?.byteCount == 41_000_000)
+        #expect(asset?.digest == "sha256:aaaa")
+    }
+
+    @Test("An archive is the fallback when no disk image is attached")
+    func fallsBackToArchive() throws {
+        let raw = try assets(#"""
+        [{"name":"notes.txt","browser_download_url":"https://e/n.txt","size":1},
+         {"name":"Machline.zip","browser_download_url":"https://e/m.zip","size":40}]
+        """#)
+        #expect(UpdateCheck.installer(in: raw)?.name == "Machline.zip")
+    }
+
+    /// A release cut without a build attached still has a page worth opening, so this is `nil`
+    /// rather than an error — the banner falls back to the link.
+    @Test("A release with nothing installable attached offers no download")
+    func noInstallableAsset() throws {
+        let raw = try assets(#"[{"name":"notes.txt","browser_download_url":"https://e/n.txt","size":1}]"#)
+        #expect(UpdateCheck.installer(in: raw) == nil)
+        #expect(UpdateCheck.installer(in: []) == nil)
+    }
+
+    @Test("An asset missing its download URL is skipped rather than half-built")
+    func malformedAsset() throws {
+        let raw = try assets(#"[{"name":"Machline.dmg","size":40}]"#)
+        #expect(UpdateCheck.installer(in: raw) == nil)
+    }
+
+    // MARK: Digest handling
+
+    @Test("Both digest spellings reduce to the same hex")
+    func digestNormalisation() {
+        let hex = String(repeating: "a", count: 64)
+        #expect(ReleaseDownload.normalised(digest: "sha256:\(hex)") == hex)
+        #expect(ReleaseDownload.normalised(digest: hex.uppercased()) == hex)
+    }
+
+    /// An unverifiable digest leaves the download unverified; it must not fail a good file. A
+    /// wrong-length or non-hex value is exactly that case.
+    @Test("An unusable digest is ignored rather than treated as a mismatch")
+    func unusableDigest() {
+        #expect(ReleaseDownload.normalised(digest: nil) == nil)
+        #expect(ReleaseDownload.normalised(digest: "") == nil)
+        #expect(ReleaseDownload.normalised(digest: "md5:abc") == nil)
+        #expect(ReleaseDownload.normalised(digest: "sha256:not-hex") == nil)
+    }
+
+    /// A second download of the same release must not overwrite the first, which may be the one
+    /// the operator is part-way through installing.
+    @Test("A download never overwrites a file already sitting there")
+    func placementIsNonDestructive() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("machline-place-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let asset = UpdateCheck.Asset(
+            name: "Machline-1.2.0.dmg", url: URL(string: "https://e/m.dmg")!,
+            byteCount: 4, digest: nil)
+        let download = ReleaseDownload(asset: asset, directory: root)
+
+        func source(_ contents: String) throws -> URL {
+            let url = root.appendingPathComponent("src-\(UUID().uuidString)")
+            try Data(contents.utf8).write(to: url)
+            return url
+        }
+
+        let first = try download.place(try source("one"), as: asset.name)
+        let second = try download.place(try source("two"), as: asset.name)
+
+        #expect(first.lastPathComponent == "Machline-1.2.0.dmg")
+        #expect(second.lastPathComponent == "Machline-1.2.0 2.dmg")
+        #expect(try String(contentsOf: first, encoding: .utf8) == "one")
+        #expect(try String(contentsOf: second, encoding: .utf8) == "two")
+    }
+
+    @Test("Downloads land in Downloads unless told otherwise")
+    func destinationDefaults() {
+        let asset = UpdateCheck.Asset(
+            name: "Machline.dmg", url: URL(string: "https://e/m.dmg")!, byteCount: 1, digest: nil)
+        let expected = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        #expect(ReleaseDownload(asset: asset).directory == expected)
+
+        let custom = URL(fileURLWithPath: "/tmp/machline-test")
+        #expect(ReleaseDownload(asset: asset, directory: custom).directory == custom)
+    }
 }

@@ -11,10 +11,37 @@ import Foundation
 /// than on by default.
 public struct UpdateCheck: Sendable {
 
+    /// A file attached to the release — for this project, the disk image the workflow builds.
+    public struct Asset: Sendable, Hashable {
+        public let name: String
+        public let url: URL
+        public let byteCount: Int
+        /// GitHub's own digest for the file, `sha256:…`, when the API reports one. Checked after
+        /// the download so a truncated or substituted file is refused rather than opened.
+        public let digest: String?
+
+        public init(name: String, url: URL, byteCount: Int, digest: String?) {
+            self.name = name
+            self.url = url
+            self.byteCount = byteCount
+            self.digest = digest
+        }
+    }
+
     public struct Release: Sendable, Hashable {
         public let version: String
         public let url: URL
         public let notes: String?
+        /// What to download. `nil` for a release published without a build attached, which is when
+        /// the release page is still the only thing to offer.
+        public let asset: Asset?
+
+        public init(version: String, url: URL, notes: String?, asset: Asset? = nil) {
+            self.version = version
+            self.url = url
+            self.notes = notes
+            self.asset = asset
+        }
     }
 
     public enum Outcome: Sendable, Hashable {
@@ -68,10 +95,35 @@ public struct UpdateCheck: Sendable {
             let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
             guard Self.isNewer(latest, than: currentVersion) else { return .upToDate }
             return .available(Release(
-                version: latest, url: page, notes: object["body"] as? String))
+                version: latest,
+                url: page,
+                notes: object["body"] as? String,
+                asset: Self.installer(in: object["assets"] as? [[String: Any]] ?? [])))
         } catch {
             return .unavailable("Could not reach GitHub.")
         }
+    }
+
+    /// The asset an operator would actually install.
+    ///
+    /// A disk image first, because that is what this project publishes; an archive as a fallback
+    /// so a build that ships one is still downloadable. Source tarballs are not assets in this
+    /// list, so nothing has to exclude them.
+    static func installer(in assets: [[String: Any]]) -> Asset? {
+        func asset(_ raw: [String: Any]) -> Asset? {
+            guard let name = raw["name"] as? String,
+                  let url = (raw["browser_download_url"] as? String).flatMap(URL.init(string:))
+            else { return nil }
+            return Asset(
+                name: name,
+                url: url,
+                byteCount: raw["size"] as? Int ?? 0,
+                digest: raw["digest"] as? String)
+        }
+
+        let candidates = assets.compactMap(asset)
+        return candidates.first { $0.name.lowercased().hasSuffix(".dmg") }
+            ?? candidates.first { $0.name.lowercased().hasSuffix(".zip") }
     }
 
     /// Numeric comparison, component by component.
