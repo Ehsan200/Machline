@@ -1,0 +1,9 @@
+# Normalise line endings so a checkout on another platform does not rewrite every file.
+* text=auto eol=lf
+
+# Fixtures are captured verbatim from a real CLI; rewriting their endings would invalidate them.
+Tests/HarnessCoreTests/Fixtures/** -text
+
+*.png binary
+*.icns binary
+*.dmg binary

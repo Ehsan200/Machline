@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag is the single source of truth for the version: nothing in the repo to keep in
+      # sync, and a build can always be traced back to the tag that produced it.
+      - name: Read version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: swift test
+
+      - name: Build app
+        env:
+          MACHLINE_VERSION: ${{ steps.version.outputs.version }}
+          MACHLINE_BUILD: ${{ github.run_number }}
+        run: ./Scripts/build-app.sh release
+
+      - name: Package DMG
+        env:
+          MACHLINE_VERSION: ${{ steps.version.outputs.version }}
+        run: ./Scripts/make-dmg.sh
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .build/Machline-${{ steps.version.outputs.version }}.dmg
+          # Ad-hoc signed, so Gatekeeper will refuse it on a machine that did not build it.
+          # Saying so in the release notes is better than the user discovering it.
+          body: |
+            ## Machline ${{ steps.version.outputs.version }}
+
+            **This build is not signed with an Apple Developer ID and is not notarized.**
+            macOS will refuse to open it on first launch. To run it anyway:
+
+            1. Move `Machline.app` to `/Applications`
+            2. Right-click the app → **Open** → **Open** in the dialog
+
+            You only need to do this once per version.
+          generate_release_notes: true

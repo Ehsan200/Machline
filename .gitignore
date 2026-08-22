@@ -1,0 +1,12 @@
+# SwiftPM build products and the assembled app bundle.
+.build/
+.swiftpm/
+
+# Xcode, if anyone opens the package in it.
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store

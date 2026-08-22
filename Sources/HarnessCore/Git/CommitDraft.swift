@@ -1,0 +1,335 @@
+import Foundation
+
+/// A Conventional Commits message.
+public struct ConventionalCommit: Sendable, Hashable, Codable {
+    public enum Kind: String, Sendable, Codable, CaseIterable {
+        case feat, fix, refactor, perf, docs, test, build, ci, style, chore, revert
+
+        public var explanation: String {
+            switch self {
+            case .feat: return "A new capability"
+            case .fix: return "A bug fix"
+            case .refactor: return "Restructuring without behaviour change"
+            case .perf: return "A performance improvement"
+            case .docs: return "Documentation only"
+            case .test: return "Tests only"
+            case .build: return "Build system or dependencies"
+            case .ci: return "CI configuration"
+            case .style: return "Formatting only, no behaviour change"
+            case .chore: return "Maintenance work"
+            case .revert: return "Reverts a previous commit"
+            }
+        }
+    }
+
+    public var kind: Kind
+    public var scope: String?
+    public var isBreaking: Bool
+    /// The subject text, without the `type(scope):` prefix.
+    public var summary: String
+    public var body: String?
+    /// Trailers such as `Refs: #123`.
+    public var footers: [String]
+
+    public init(
+        kind: Kind, scope: String? = nil, isBreaking: Bool = false,
+        summary: String, body: String? = nil, footers: [String] = []
+    ) {
+        self.kind = kind
+        self.scope = scope
+        self.isBreaking = isBreaking
+        self.summary = summary
+        self.body = body
+        self.footers = footers
+    }
+
+    public var subject: String {
+        var prefix = kind.rawValue
+        if let scope, !scope.isEmpty { prefix += "(\(scope))" }
+        if isBreaking { prefix += "!" }
+        return "\(prefix): \(summary)"
+    }
+
+    public func rendered() -> String {
+        var parts = [subject]
+        if let body, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(body.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if !footers.isEmpty {
+            parts.append(footers.joined(separator: "\n"))
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    // MARK: - Advisories
+
+    /// Style guidance shown next to the composer. **Advisory, never enforced** (README, Runtime) — a long
+    /// subject is a nudge, not a blocked commit.
+    public struct Advisory: Sendable, Hashable, Identifiable {
+        public enum Kind: String, Sendable { case subjectTooLong, bodyLineTooLong, emptySummary,
+                                                  subjectEndsWithPeriod, summaryNotImperative }
+        public var id: String { "\(kind.rawValue):\(detail)" }
+        public let kind: Kind
+        public let detail: String
+    }
+
+    public static let subjectLimit = 50
+    public static let bodyWrapLimit = 72
+
+    public func advisories() -> [Advisory] {
+        var advisories: [Advisory] = []
+
+        if summary.trimmingCharacters(in: .whitespaces).isEmpty {
+            advisories.append(Advisory(kind: .emptySummary, detail: "The subject has no summary"))
+        }
+        if subject.count > Self.subjectLimit {
+            advisories.append(Advisory(
+                kind: .subjectTooLong,
+                detail: "Subject is \(subject.count) characters; \(Self.subjectLimit) is the guide"))
+        }
+        if summary.hasSuffix(".") {
+            advisories.append(Advisory(
+                kind: .subjectEndsWithPeriod, detail: "Subjects conventionally omit the full stop"))
+        }
+        if let body {
+            for (index, line) in body.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
+            where line.count > Self.bodyWrapLimit {
+                advisories.append(Advisory(
+                    kind: .bodyLineTooLong,
+                    detail: "Body line \(index + 1) is \(line.count) characters; wrap at \(Self.bodyWrapLimit)"))
+            }
+        }
+        return advisories
+    }
+
+    // MARK: - Parsing
+
+    /// Parses an existing message, so an edited draft can round-trip back into the composer.
+    /// Returns `nil` when the subject is not Conventional Commits shaped.
+    public static func parse(_ message: String) -> ConventionalCommit? {
+        let lines = message.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let subject = lines.first, let colon = subject.firstIndex(of: ":") else { return nil }
+
+        var prefix = String(subject[subject.startIndex..<colon])
+        let summary = String(subject[subject.index(after: colon)...])
+            .trimmingCharacters(in: .whitespaces)
+
+        var isBreaking = false
+        if prefix.hasSuffix("!") {
+            isBreaking = true
+            prefix.removeLast()
+        }
+
+        var scope: String?
+        if let open = prefix.firstIndex(of: "("), prefix.hasSuffix(")") {
+            scope = String(prefix[prefix.index(after: open)..<prefix.index(before: prefix.endIndex)])
+            prefix = String(prefix[prefix.startIndex..<open])
+        }
+        guard let kind = Kind(rawValue: prefix) else { return nil }
+
+        let remainder = lines.dropFirst().drop { $0.isEmpty }
+        var body: String?
+        var footers: [String] = []
+        if !remainder.isEmpty {
+            let text = remainder.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            // A trailing block of `Key: value` lines is treated as footers.
+            let paragraphs = text.components(separatedBy: "\n\n")
+            if paragraphs.count > 1, Self.looksLikeFooters(paragraphs[paragraphs.count - 1]) {
+                footers = paragraphs[paragraphs.count - 1].split(separator: "\n").map(String.init)
+                body = paragraphs.dropLast().joined(separator: "\n\n")
+            } else if paragraphs.count == 1, Self.looksLikeFooters(text) {
+                footers = text.split(separator: "\n").map(String.init)
+            } else {
+                body = text
+            }
+        }
+
+        if body?.isEmpty == true { body = nil }
+        return ConventionalCommit(
+            kind: kind, scope: scope, isBreaking: isBreaking,
+            summary: summary, body: body, footers: footers)
+    }
+
+    private static func looksLikeFooters(_ text: String) -> Bool {
+        let lines = text.split(separator: "\n")
+        guard !lines.isEmpty else { return false }
+        return lines.allSatisfy { line in
+            guard let colon = line.firstIndex(of: ":") else { return false }
+            let key = line[line.startIndex..<colon]
+            return !key.isEmpty && !key.contains(" ") || key.hasPrefix("BREAKING CHANGE")
+        }
+    }
+}
+
+/// Generates a commit-message draft from the staged diff.
+///
+/// Reuses the agent runtime rather than adding a second LLM path (README, Runtime): a short-lived
+/// `claude -p` invocation with `--json-schema`, so the result is a validated object rather than
+/// prose to be scraped. The draft is always a suggestion — the operator edits it and triggers the
+/// commit themselves.
+public struct CommitDraftGenerator: Sendable {
+
+    public enum Failure: Error, Sendable {
+        case nothingStaged
+        case generationFailed(String)
+        case unusableResponse(String)
+    }
+
+    public var executable: String
+    public var model: String?
+    /// Staged diffs beyond this many characters are truncated before being sent.
+    public var diffCharacterLimit: Int
+
+    public init(
+        executable: String = "claude",
+        model: String? = nil,
+        diffCharacterLimit: Int = 60_000
+    ) {
+        self.executable = executable
+        self.model = model
+        self.diffCharacterLimit = diffCharacterLimit
+    }
+
+    static let schema = #"""
+    {"type":"object","properties":{"kind":{"type":"string","enum":["feat","fix","refactor","perf","docs","test","build","ci","style","chore","revert"]},"scope":{"type":"string"},"isBreaking":{"type":"boolean"},"summary":{"type":"string"},"body":{"type":"string"}},"required":["kind","summary","isBreaking"]}
+    """#
+
+    public func draft(for manager: GitManager) async throws -> ConventionalCommit {
+        let status = try manager.status()
+        guard !status.staged.isEmpty else { throw Failure.nothingStaged }
+
+        let diffText = try manager.stagedDiff()
+            .compactMap(\.fullPatch)
+            .joined(separator: "\n")
+        let truncated = diffText.count > diffCharacterLimit
+            ? String(diffText.prefix(diffCharacterLimit)) + "\n[diff truncated]"
+            : diffText
+
+        let prompt = """
+        Write a Conventional Commits message for the staged changes below.
+
+        Rules:
+        - The subject line, including the `type(scope):` prefix, should fit in \
+        \(ConventionalCommit.subjectLimit) characters.
+        - Use the imperative mood and omit a trailing full stop.
+        - Include a body only when the reason for the change is not obvious from the diff. \
+        Wrap it at \(ConventionalCommit.bodyWrapLimit) characters.
+        - Set isBreaking only for a genuine incompatible change.
+
+        Staged diff:
+        \(truncated)
+        """
+
+        // Drafting is a one-shot question, not a conversation the operator will return to — but
+        // the CLI records every run as a session, and a run in the repository would file it under
+        // that project and put it in the session list. So it runs in a scratch directory under a
+        // known id, and the transcript is removed afterwards.
+        let scratch = try Self.makeScratchDirectory()
+        let sessionID = UUID()
+        defer { Self.discardTranscript(sessionID: sessionID, scratch: scratch) }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        var arguments = [
+            executable, "-p",
+            "--output-format", "json",
+            "--json-schema", Self.schema,
+            "--session-id", sessionID.uuidString.lowercased(),
+            // A drafting call has no business reading the operator's settings or touching tools.
+            "--setting-sources", "",
+            "--strict-mcp-config",
+            "--tools", ""
+        ]
+        if let model { arguments += ["--model", model] }
+        process.arguments = arguments
+        // Not the repository: the diff is already in the prompt, and `--tools ""` means there is
+        // nothing here that needs to see the working tree.
+        process.currentDirectoryURL = scratch
+
+        let stdinPipe = Pipe(), stdoutPipe = Pipe(), stderrPipe = Pipe()
+        process.standardInput = stdinPipe
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            throw Failure.generationFailed(String(describing: error))
+        }
+        try? stdinPipe.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
+        try? stdinPipe.fileHandleForWriting.close()
+
+        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw Failure.generationFailed(String(decoding: errData, as: UTF8.self))
+        }
+        return try Self.parseResponse(String(decoding: outData, as: UTF8.self))
+    }
+
+    /// A directory for the drafting run to be recorded against.
+    static func makeScratchDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("machline-commit-draft-\(UUID().uuidString)")
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        } catch {
+            throw Failure.generationFailed("Could not create a scratch directory: \(error)")
+        }
+        return url
+    }
+
+    /// Removes everything the drafting run left behind.
+    ///
+    /// Both the scratch directory and the CLI's own transcript for it. Best-effort: a draft that
+    /// succeeded must not fail because a temporary file could not be deleted, and the next run
+    /// would remove a leftover anyway.
+    static func discardTranscript(sessionID: UUID, scratch: URL, store: SessionHistory = SessionHistory()) {
+        let manager = FileManager.default
+        let projectDirectory = store.root.appendingPathComponent(
+            SessionHistory.directoryName(for: scratch), isDirectory: true)
+
+        // The whole directory: it exists only for this run, so nothing else is in it.
+        try? manager.removeItem(at: projectDirectory)
+        // Belt and braces, in case the CLI filed it somewhere the mangling did not predict.
+        try? manager.removeItem(
+            at: store.root
+                .appendingPathComponent(SessionHistory.directoryName(for: scratch))
+                .appendingPathComponent("\(sessionID.uuidString.lowercased()).jsonl"))
+        try? manager.removeItem(at: scratch)
+    }
+
+    /// Extracts the structured draft from a `--output-format json` envelope.
+    static func parseResponse(_ text: String) throws -> ConventionalCommit {
+        guard let data = text.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(JSONValue.self, from: data)
+        else { throw Failure.unusableResponse(text) }
+
+        // The payload arrives as a JSON string in `result`; some versions nest it directly.
+        let payload: JSONValue
+        if let resultText = envelope["result"]?.stringValue,
+           let resultData = resultText.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(JSONValue.self, from: resultData) {
+            payload = decoded
+        } else if let structured = envelope["structured_output"] ?? envelope["result"] {
+            payload = structured
+        } else {
+            payload = envelope
+        }
+
+        guard let kindText = payload["kind"]?.stringValue,
+              let kind = ConventionalCommit.Kind(rawValue: kindText),
+              let summary = payload["summary"]?.stringValue
+        else { throw Failure.unusableResponse(text) }
+
+        let scope = payload["scope"]?.stringValue
+        return ConventionalCommit(
+            kind: kind,
+            scope: (scope?.isEmpty ?? true) ? nil : scope,
+            isBreaking: payload["isBreaking"]?.boolValue ?? false,
+            summary: summary,
+            body: payload["body"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 })
+    }
+}
