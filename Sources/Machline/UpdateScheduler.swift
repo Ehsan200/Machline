@@ -26,8 +26,13 @@ final class UpdateScheduler {
     private static let wake: TimeInterval = 60 * 60
 
     private let defaults: UserDefaults
-    private var models: [WeakModel] = []
-    private var task: Task<Void, Never>?
+    // Bookkeeping rather than interface, and deliberately outside observation. Every `AppModel`
+    // registers itself from its own initialiser, so an observed `models` made that registration
+    // an invalidation — and a model built while the window was updating then invalidated the very
+    // update that had built it. The window rebuilt, built another model, registered it, and the
+    // main thread went round that loop forever.
+    @ObservationIgnored private var models: [WeakModel] = []
+    @ObservationIgnored private var task: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults

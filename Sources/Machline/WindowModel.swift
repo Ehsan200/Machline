@@ -166,3 +166,11 @@ extension AppModel {
         return "New session"
     }
 }
+
+/// Defers a window's model to first use, so re-creating the view does not rebuild it.
+///
+/// See `ContentView.box` for why the model cannot simply be `@State`'s initial value.
+@MainActor
+final class WindowModelBox {
+    lazy var model = WindowModel()
+}

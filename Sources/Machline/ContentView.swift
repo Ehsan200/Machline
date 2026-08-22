@@ -12,7 +12,15 @@ struct ContentView: View {
 
     /// One window holds one project's sessions, each with its own child process and approval
     /// broker. Tabs are drawn by the app; see `WindowModel` for why not AppKit's.
-    @State private var window = WindowModel()
+    ///
+    /// Kept in a box because `@State`'s initial value is an ordinary expression: SwiftUI keeps
+    /// only the first one it is handed, but the expression itself runs every time the view is
+    /// re-created. Building a `WindowModel` reads the recents list, the machine configuration and
+    /// the stored settings off disk, so `= WindowModel()` did all of that on every pass and threw
+    /// the result away.
+    @State private var box = WindowModelBox()
+
+    private var window: WindowModel { box.model }
 
     private var model: AppModel { window.current }
 
