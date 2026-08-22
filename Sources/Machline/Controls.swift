@@ -314,6 +314,11 @@ struct CheckBox<Label: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // The system focus ring is a rounded rectangle around the whole label, which around a
+        // 13pt box plus text reads as a stray highlight rather than as focus. The list itself
+        // carries keyboard focus and drives the box with space, so the button never needs it.
+        .focusable(false)
+        .focusEffectDisabled()
         .opacity(isEnabled ? 1 : 0.45)
         .onHover { isHovering = $0 && isEnabled }
     }

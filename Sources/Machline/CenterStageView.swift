@@ -404,13 +404,7 @@ struct TimelineEventView: View {
                 Spacer(minLength: 0)
             }
 
-            Text(text)
-                .font(Theme.Typography.prose)
-                .fontWeight(.medium)
-                .lineSpacing(Theme.Typography.proseLineSpacing)
-                .foregroundStyle(Theme.Colors.textStrong)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            MessageBody(text: text)
         }
         .padding(Theme.Space.lg)
         .frame(maxWidth: .infinity, alignment: .leading)

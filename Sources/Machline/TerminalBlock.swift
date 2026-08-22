@@ -106,12 +106,7 @@ struct ReplayEntryView: View {
         switch entry.kind {
         case .user(let text):
             labelled("YOU", strong: true) {
-                Text(text)
-                    .font(Theme.Typography.prose)
-                    .fontWeight(.medium)
-                    .lineSpacing(Theme.Typography.proseLineSpacing)
-                    .foregroundStyle(Theme.Colors.textStrong)
-                    .textSelection(.enabled)
+                MessageBody(text: text)
             }
 
         case .assistant(let text):

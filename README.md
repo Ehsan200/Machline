@@ -22,6 +22,8 @@ and is the type a UI binds to.
 - **macOS app** — a three-pane SwiftUI workspace over the engine: a session rail holding the agent
   tree, a chronological event timeline with a three-band composer, and a run panel carrying context
   usage, active agents, session-wide changes, and the Git workbench, MCP hub, and diagnostics.
+  Images pasted into a prompt are shown as the picture rather than as the CLI's `[Image: source:
+  …]` path text, in both the live timeline and a resumed session's replay.
 
 See [`PARITY.md`](PARITY.md) for what is still missing against the reference setup this interface
 is modelled on.
@@ -41,6 +43,7 @@ is not** — the views compile and the app launches, but no automated test exerc
 | `Sources/harness-echo-mcp` | Minimal MCP server used as a test fixture |
 | `Sources/Machline` | SwiftUI application |
 | `Sources/Machline/TerminalPane.swift` | Embedded shell; the only file that touches SwiftTerm |
+| `Sources/Machline/PastedImage.swift` | Renders pasted-image references in a message as the image |
 | `Scripts/build-app.sh` | Assembles `Machline.app` from the SPM products |
 | `Scripts/release.sh` | Verifies, tags, and pushes a release |
 | `Scripts/make-dmg.sh` | Packages the app into a disk image |

@@ -244,6 +244,11 @@ struct GitWorkbenchView: View {
         // key presses reach no one.
         .focusable()
         .focused($isFileListFocused)
+        // The list needs focus, not the system's ring. AppKit draws that ring around the first
+        // focusable descendant it finds — here the bulk bar — which reads as a stray highlight on
+        // a row the operator never aimed at. The selected row's own background already says where
+        // the keyboard is pointing.
+        .focusEffectDisabled()
         .onKeyPress(phases: .down) { press in
             switch press.key {
             case .upArrow:
