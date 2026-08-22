@@ -78,6 +78,24 @@ public struct GitManager: Sendable {
         return GitDiffParser.parse(output.text).first
     }
 
+    /// Everything in the working tree that the index does not have: `git diff` for tracked files,
+    /// plus an against-nothing diff for every untracked path.
+    ///
+    /// `git diff` is blind to untracked files, so a freshly written file would otherwise never
+    /// appear in the workbench — and the workbench is the one surface that would have told you it
+    /// needs adding. Composed here rather than in the UI so every caller sees the same working
+    /// tree.
+    public func unstagedDiffIncludingUntracked(status known: GitStatus? = nil) throws
+        -> [GitFileDiff] {
+        let status = try known ?? self.status()
+        var diffs = try unstagedDiff()
+        let tracked = Set(diffs.map(\.newPath))
+        for file in status.files where file.isUntracked && !tracked.contains(file.path) {
+            if let diff = try untrackedDiff(path: file.path) { diffs.append(diff) }
+        }
+        return diffs.sorted { $0.newPath < $1.newPath }
+    }
+
     // MARK: - Whole-file operations
 
     public func stage(paths: [String]) throws {

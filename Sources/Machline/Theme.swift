@@ -223,6 +223,10 @@ struct IconButton: View {
                 .background(
                     RoundedRectangle(cornerRadius: Theme.Layout.radius)
                         .fill(isHovering ? Theme.Colors.hover : .clear))
+                // A clear fill is not hit-tested, so without this the click target is the glyph's
+                // own strokes and the rest of the square is dead. The rule holds anywhere a
+                // button's visible box is larger than its label: give the box the hit shape.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
@@ -254,6 +258,7 @@ struct QuietButton: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: Theme.Layout.radius)
                         .strokeBorder(Theme.Colors.border, lineWidth: role == .normal ? 1 : 0))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)

@@ -293,9 +293,10 @@ final class GitPanelModel {
                     }
                     return
                 }
+                let status = try manager.status()
                 result = .success((
-                    try manager.status(),
-                    try manager.unstagedDiff(),
+                    status,
+                    try manager.unstagedDiffIncludingUntracked(status: status),
                     try manager.stagedDiff(),
                     try manager.recentCommits(limit: 15)))
             } catch {

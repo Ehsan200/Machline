@@ -16,7 +16,9 @@ and is the type a UI binds to.
 - **Agent tree** — a pure reducer folding the frame stream into a hierarchy of agents with states,
   transcripts, and per-subagent telemetry.
 - **Git workbench** — status and diff parsing, hunk-level staging/unstaging/discarding, commit
-  composition with Conventional Commits, and AI-drafted messages.
+  composition with Conventional Commits, and AI-drafted messages. Untracked files sit on the
+  unstaged side alongside edited ones, diffed against nothing, since `git diff` alone would leave a
+  newly written file invisible.
 - **MCP hub** — server configuration, per-agent tool grants, advisory write-capability
   classification, and a stdio proxy that tees JSON-RPC to a traffic inspector.
 - **macOS app** — a three-pane SwiftUI workspace over the engine: a session rail holding the agent
@@ -28,7 +30,7 @@ and is the type a UI binds to.
 See [`PARITY.md`](PARITY.md) for what is still missing against the reference setup this interface
 is modelled on.
 
-183 tests: 170 offline (archived CLI transcripts, real throwaway repositories, and a bundled
+322 tests: 309 offline (archived CLI transcripts, real throwaway repositories, and a bundled
 JSON-RPC server), 13 opt-in live tests that drive the real binary. **The engine is tested; the UI
 is not** — the views compile and the app launches, but no automated test exercises them.
 

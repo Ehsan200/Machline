@@ -531,6 +531,8 @@ struct SessionRow: View {
                             Image(systemName: "pencil")
                                 .font(.system(size: 10))
                                 .foregroundStyle(Theme.Colors.link)
+                                .frame(width: 16, height: 16)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .help("Rename this conversation")
@@ -539,6 +541,8 @@ struct SessionRow: View {
                             Image(systemName: "archivebox")
                                 .font(.system(size: 10))
                                 .foregroundStyle(Theme.Colors.subtle)
+                                .frame(width: 16, height: 16)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .help("Archive — hides it from this list, keeps the transcript")

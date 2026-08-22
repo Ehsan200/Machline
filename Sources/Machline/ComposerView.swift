@@ -276,6 +276,7 @@ struct ComposerView: View {
                                     ? Theme.Colors.accent.opacity(0.5)
                                     : Theme.Colors.border,
                                 lineWidth: 1))
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(model.workspace == nil)
@@ -295,6 +296,7 @@ struct ComposerView: View {
                         .overlay(
                             RoundedRectangle(cornerRadius: Theme.Layout.radius)
                                 .strokeBorder(Theme.Colors.error.opacity(0.6), lineWidth: 1))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Abort the current tool call. Steering only lands at the next turn boundary.")

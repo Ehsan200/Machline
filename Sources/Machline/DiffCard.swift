@@ -156,6 +156,8 @@ struct DiffCard: View {
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(Theme.Colors.subtle)
                     .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 

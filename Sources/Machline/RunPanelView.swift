@@ -128,6 +128,7 @@ struct ContextSummary: View {
                     }
                     .font(Theme.Typography.meta)
                     .foregroundStyle(Theme.Colors.link)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

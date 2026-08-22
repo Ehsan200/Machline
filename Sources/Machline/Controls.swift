@@ -203,6 +203,8 @@ private struct SelectMenu<Value: Hashable>: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 10))
                         .foregroundStyle(Theme.Colors.subtle)
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

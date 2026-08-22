@@ -202,6 +202,26 @@ struct GitDiffTests {
         #expect(diff.hunks[0].lines.contains { $0.text == "brand new" })
     }
 
+    /// What the workbench's unstaged side is actually built from: a new file has to sit beside the
+    /// edited ones, since the panel is where the operator would learn it needs adding at all.
+    @Test("The working-tree diff carries tracked edits and untracked files together")
+    func workingTreeDiffIncludesUntracked() throws {
+        let repository = try GitTestRepository()
+        try repository.write("one\n", to: "tracked.txt")
+        try repository.commit("initial")
+        try repository.write("one\ntwo\n", to: "tracked.txt")
+        try repository.write("brand new\n", to: "fresh.txt")
+
+        let diffs = try repository.manager.unstagedDiffIncludingUntracked()
+        #expect(diffs.map(\.newPath) == ["fresh.txt", "tracked.txt"])
+
+        // Whole-file staging of an untracked path is `git add`, so it must land in the index.
+        try repository.manager.stage(paths: ["fresh.txt"])
+        #expect(try repository.manager.status().staged.map(\.path) == ["fresh.txt"])
+        #expect(try repository.manager.unstagedDiffIncludingUntracked().map(\.newPath)
+            == ["tracked.txt"])
+    }
+
     /// `--intent-to-add` is how `git add -p` makes a new file hunk-stageable.
     @Test("Intent-to-add makes a new file hunk-stageable")
     func intentToAddEnablesHunkStaging() throws {
