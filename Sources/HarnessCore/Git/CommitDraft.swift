@@ -175,19 +175,55 @@ public struct CommitDraftGenerator: Sendable {
         case unusableResponse(String)
     }
 
+    /// Forks a conversation that already watched the work happen, instead of starting cold.
+    ///
+    /// The fork inherits the session's context — including the edits it just made — so the prompt
+    /// carries a much smaller slice of the diff and the provider's cache already holds the prefix.
+    /// It also means the session's own model is used: overriding the model on a fork throws the
+    /// warm cache away and re-sends the whole conversation, which is slower than a cold small
+    /// model, not faster.
+    public struct Fork: Sendable, Hashable {
+        public let sessionID: String
+        /// Where the conversation is filed, so `--resume` finds it and the forked transcript can
+        /// be deleted afterwards.
+        public let workingDirectory: URL
+
+        public init(sessionID: String, workingDirectory: URL) {
+            self.sessionID = sessionID
+            self.workingDirectory = workingDirectory
+        }
+    }
+
+    /// Writing a subject line from a diff is summarising, not reasoning: the small model answers
+    /// in a second or two where the session's model took tens of them, on the same three lines of
+    /// output. Only used for a cold run — a fork keeps whatever model that session negotiated.
+    public static let defaultModel = "claude-haiku-4-5-20251001"
+
     public var executable: String
     public var model: String?
+    /// Passed to `--effort`. Drafting has nothing to think about.
+    public var effort: String?
     /// Staged diffs beyond this many characters are truncated before being sent.
     public var diffCharacterLimit: Int
+    public var fork: Fork?
 
     public init(
         executable: String = "claude",
-        model: String? = nil,
-        diffCharacterLimit: Int = 60_000
+        model: String? = CommitDraftGenerator.defaultModel,
+        effort: String? = "low",
+        diffCharacterLimit: Int = 60_000,
+        fork: Fork? = nil
     ) {
         self.executable = executable
         self.model = model
+        self.effort = effort
         self.diffCharacterLimit = diffCharacterLimit
+        self.fork = fork
+    }
+
+    /// A fork already knows what changed, so it is sent a slice rather than the whole patch.
+    private var effectiveDiffLimit: Int {
+        fork == nil ? diffCharacterLimit : min(diffCharacterLimit, 8_000)
     }
 
     static let schema = #"""
@@ -201,12 +237,18 @@ public struct CommitDraftGenerator: Sendable {
         let diffText = try manager.stagedDiff()
             .compactMap(\.fullPatch)
             .joined(separator: "\n")
-        let truncated = diffText.count > diffCharacterLimit
-            ? String(diffText.prefix(diffCharacterLimit)) + "\n[diff truncated]"
+        let limit = effectiveDiffLimit
+        let truncated = diffText.count > limit
+            ? String(diffText.prefix(limit)) + "\n[diff truncated]"
             : diffText
 
+        let opening = fork == nil
+            ? "Write a Conventional Commits message for the staged changes below."
+            : "Write a Conventional Commits message for the changes staged in this repository. "
+                + "You have been working on them, so use what you already know about why they "
+                + "were made; the diff below is included only as a reminder and may be truncated."
         let prompt = """
-        Write a Conventional Commits message for the staged changes below.
+        \(opening)
 
         Rules:
         - The subject line, including the `type(scope):` prefix, should fit in \
@@ -222,11 +264,14 @@ public struct CommitDraftGenerator: Sendable {
 
         // Drafting is a one-shot question, not a conversation the operator will return to — but
         // the CLI records every run as a session, and a run in the repository would file it under
-        // that project and put it in the session list. So it runs in a scratch directory under a
-        // known id, and the transcript is removed afterwards.
-        let scratch = try Self.makeScratchDirectory()
+        // that project and put it in the session list. A cold run therefore happens in a scratch
+        // directory under a known id; a fork has to run where the conversation it forks is filed,
+        // so its transcript is found by the id the CLI reports back and deleted afterwards.
+        let scratch = fork == nil ? try Self.makeScratchDirectory() : nil
         let sessionID = UUID()
-        defer { Self.discardTranscript(sessionID: sessionID, scratch: scratch) }
+        defer {
+            if let scratch { Self.discardTranscript(sessionID: sessionID, scratch: scratch) }
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -234,17 +279,25 @@ public struct CommitDraftGenerator: Sendable {
             executable, "-p",
             "--output-format", "json",
             "--json-schema", Self.schema,
-            "--session-id", sessionID.uuidString.lowercased(),
             // A drafting call has no business reading the operator's settings or touching tools.
             "--setting-sources", "",
             "--strict-mcp-config",
             "--tools", ""
         ]
-        if let model { arguments += ["--model", model] }
+        if let fork {
+            // `--fork-session` branches off rather than continuing the operator's conversation, so
+            // the session they are working in is left exactly as it was.
+            arguments += ["--resume", fork.sessionID, "--fork-session"]
+        } else {
+            arguments += ["--session-id", sessionID.uuidString.lowercased()]
+            if let model { arguments += ["--model", model] }
+        }
+        if let effort, !effort.isEmpty { arguments += ["--effort", effort] }
         process.arguments = arguments
-        // Not the repository: the diff is already in the prompt, and `--tools ""` means there is
-        // nothing here that needs to see the working tree.
-        process.currentDirectoryURL = scratch
+        // A cold run gets the scratch directory: the diff is already in the prompt, and
+        // `--tools ""` means nothing here needs to see the working tree. A fork runs in the
+        // repository, because that is where its conversation lives.
+        process.currentDirectoryURL = scratch ?? fork?.workingDirectory
 
         let stdinPipe = Pipe(), stdoutPipe = Pipe(), stderrPipe = Pipe()
         process.standardInput = stdinPipe
@@ -266,7 +319,32 @@ public struct CommitDraftGenerator: Sendable {
         guard process.terminationStatus == 0 else {
             throw Failure.generationFailed(String(decoding: errData, as: UTF8.self))
         }
-        return try Self.parseResponse(String(decoding: outData, as: UTF8.self))
+        let response = String(decoding: outData, as: UTF8.self)
+        // The fork was minted with an id we did not choose, so it is removed by the one the CLI
+        // reports. Best-effort, like the cold path: a good draft must not fail on a stray file.
+        if let fork, let forked = Self.reportedSessionID(in: response) {
+            Self.discardForkedTranscript(sessionID: forked, workingDirectory: fork.workingDirectory)
+        }
+        return try Self.parseResponse(response)
+    }
+
+    /// The id the run was actually recorded under, from the `json` envelope.
+    static func reportedSessionID(in text: String) -> String? {
+        guard let data = text.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(JSONValue.self, from: data),
+              let id = envelope["session_id"]?.stringValue, !id.isEmpty
+        else { return nil }
+        return id
+    }
+
+    /// Removes a forked drafting transcript from the project it was filed under.
+    static func discardForkedTranscript(
+        sessionID: String, workingDirectory: URL, store: SessionHistory = SessionHistory()
+    ) {
+        let directory = store.root.appendingPathComponent(
+            SessionHistory.directoryName(for: workingDirectory), isDirectory: true)
+        try? FileManager.default.removeItem(
+            at: directory.appendingPathComponent("\(sessionID.lowercased()).jsonl"))
     }
 
     /// A directory for the drafting run to be recorded against.

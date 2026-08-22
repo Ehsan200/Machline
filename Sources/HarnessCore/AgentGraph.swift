@@ -29,6 +29,9 @@ public struct AgentGraph: Sendable {
     private var nodeIDByToolUseID: [String: String] = [:]
     /// Tool calls currently in flight, so a result can restore the right state.
     private var toolCallOwner: [String: String] = [:]
+    /// The last assistant message whose usage was counted, per agent. Frames repeat a message's
+    /// usage once per content block.
+    private var lastCountedMessageID: [String: String] = [:]
     private var idGenerator: @Sendable () -> UUID
 
     /// - Parameter idGenerator: overridable so tests can assert on stable transcript ids.
@@ -253,6 +256,24 @@ public struct AgentGraph: Sendable {
     private mutating func apply(
         message: AssistantMessage, to ownerID: String, changes: inout [GraphChange]
     ) {
+        // Usage rides on the frame that carries the reply, and is that call's own accounting —
+        // the `result` frame's usage is the whole turn added up, which is a different number.
+        if let usage = message.usage {
+            func tokens(_ key: String) -> Int { usage[key]?.intValue ?? 0 }
+            let input = tokens("input_tokens")
+                + tokens("cache_read_input_tokens")
+                + tokens("cache_creation_input_tokens")
+            let output = tokens("output_tokens")
+            // Frames arrive one per content block, all sharing a message id, and every one repeats
+            // that message's usage. Counting each would multiply the bill by the block count.
+            if lastCountedMessageID[ownerID] != message.id {
+                lastCountedMessageID[ownerID] = message.id
+                nodes[ownerID]?.telemetry.contextTokens = input + output
+                nodes[ownerID]?.telemetry.billedTokens += input + output
+                changes.append(.telemetryUpdated(id: ownerID))
+            }
+        }
+
         // The assembled blocks supersede the preview.
         if nodes[ownerID]?.streamingText.isEmpty == false {
             nodes[ownerID]?.streamingText = ""

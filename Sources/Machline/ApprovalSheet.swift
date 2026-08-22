@@ -12,9 +12,6 @@ struct ApprovalSheet: View {
 
     @State private var feedback = ""
     @State private var isWritingFeedback = false
-    @State private var remaining: TimeInterval = 0
-
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -25,10 +22,6 @@ struct ApprovalSheet: View {
             footer
         }
         .frame(width: 620)
-        .onReceive(ticker) { _ in
-            remaining = max(0, pending.deadline.timeIntervalSinceNow)
-        }
-        .onAppear { remaining = max(0, pending.deadline.timeIntervalSinceNow) }
     }
 
     // MARK: - Header
@@ -54,19 +47,7 @@ struct ApprovalSheet: View {
 
     /// Denial is the default outcome of inaction, so the countdown says exactly that.
     private var countdown: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            Text(remaining > 0 ? formatted(remaining) : "expired")
-                .font(.body.monospacedDigit())
-                .foregroundStyle(remaining < 60 ? .red : .secondary)
-            Text("until auto-deny")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func formatted(_ interval: TimeInterval) -> String {
-        let total = Int(interval)
-        return String(format: "%d:%02d", total / 60, total % 60)
+        Countdown(deadline: pending.deadline, outcome: "until auto-deny")
     }
 
     // MARK: - Details

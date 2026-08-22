@@ -630,6 +630,45 @@ final class AppModel: Identifiable {
         selectedAgentID = agentID
     }
 
+    // MARK: - Timeline disclosure
+
+    /// Which timeline rows the operator has opened or closed, keyed by the entry they belong to.
+    ///
+    /// The timeline is a `LazyVStack`: a row scrolled out of the viewport is torn down and the
+    /// `@State` inside it goes with it. Opening a tool row and then receiving a few frames —
+    /// which scrolls the timeline to its foot — was enough to lose it, which is why the
+    /// disclosure control looked like it worked only sometimes. Held here, a row's state belongs
+    /// to the conversation rather than to whichever view currently exists.
+    private var rowExpansion: [RowKey: Bool] = [:]
+
+    /// Live entries carry a UUID; replayed ones are numbered by their position in the file, which
+    /// is only unique within the conversation currently loaded — hence two cases rather than one
+    /// shared key space.
+    enum RowKey: Hashable {
+        case live(UUID)
+        case replay(Int)
+    }
+
+    /// `whenUnset` carries the row's default — errors and blocks open themselves.
+    func isRowExpanded(_ key: RowKey, whenUnset fallback: Bool = false) -> Bool {
+        rowExpansion[key] ?? fallback
+    }
+
+    func setRow(_ key: RowKey, expanded: Bool) {
+        rowExpansion[key] = expanded
+    }
+
+    func toggleRow(_ key: RowKey, whenUnset fallback: Bool = false) {
+        rowExpansion[key] = !isRowExpanded(key, whenUnset: fallback)
+    }
+
+    /// A binding for the rows that take one, so the disclosure control stays unchanged.
+    func rowExpansionBinding(_ key: RowKey, whenUnset fallback: Bool = false) -> Binding<Bool> {
+        Binding(
+            get: { self.isRowExpanded(key, whenUnset: fallback) },
+            set: { self.setRow(key, expanded: $0) })
+    }
+
     // MARK: - Lifecycle
 
     /// Re-reads the recent-project list, which another window may have added to.
@@ -741,6 +780,19 @@ final class AppModel: Identifiable {
     /// default — a rail listing two hundred rows hides the handful that matter.
     var sessionGroups: [SessionGroup] { SessionGroup.group(projectSessions) }
 
+    /// The conversation a commit draft should fork: the one running here, or failing that the
+    /// project's most recently active one.
+    ///
+    /// Forking beats a cold run twice over — the agent already knows why it made these changes,
+    /// and the provider's cache already holds the conversation, so the drafting call sends a short
+    /// prompt instead of the whole patch. `nil` means there is nothing to fork and the draft runs
+    /// cold on the small model.
+    var commitDraftFork: CommitDraftGenerator.Fork? {
+        guard let workspace = workspace?.url else { return nil }
+        guard let id = liveSessionID ?? projectSessions.first?.id, !id.isEmpty else { return nil }
+        return CommitDraftGenerator.Fork(sessionID: id, workingDirectory: workspace)
+    }
+
     /// The name to show, preferring one the operator typed.
     func title(for session: HistoricalSession) -> String {
         customTitles[session.id] ?? session.title
@@ -845,6 +897,12 @@ final class AppModel: Identifiable {
     /// Reads a recorded conversation for display. Off the main actor: transcripts run to megabytes.
     private func loadReplay(of session: HistoricalSession) {
         replay = []
+        // Replay keys are positions in the file, so they mean nothing once a different
+        // conversation is loaded into this tab.
+        rowExpansion = rowExpansion.filter { key, _ in
+            if case .replay = key { return false }
+            return true
+        }
         recordedUsage = nil
         isLoadingReplay = true
         Task { [history] in
@@ -1042,6 +1100,12 @@ final class AppModel: Identifiable {
                 self.failOpenIncidents = snapshot.nodes.values
                     .filter(\.hasFailOpenIncident)
                     .map { "Agent \($0.title) ran a command without approval." }
+
+                // The working tree is being changed *during* a turn, not at the end of one.
+                // Waiting for `turnCompleted` meant the Changes list and the Git workbench sat
+                // stale for minutes while files moved underneath them. `refresh()` coalesces, so
+                // a burst of edits still costs one `git status`.
+                if !isStreamingOnly { self.git?.refresh() }
             }
 
         case .approvalPending(let pending):
@@ -1149,6 +1213,16 @@ final class AppModel: Identifiable {
 
     func deny(_ pending: PendingApproval, feedback: String) {
         pending.deny(feedback: feedback)
+    }
+
+    /// Answers an `AskUserQuestion` call.
+    ///
+    /// Resolved as a denial carrying the answer, which is not the contradiction it looks like: the
+    /// verdict stops the runtime asking again through an interface this app does not present, and
+    /// the reason is delivered to the agent as the call's result — which is precisely where an
+    /// answer belongs. `AskUserQuestion.result` words it so the agent reads a reply, not a refusal.
+    func answer(_ pending: PendingApproval, with answers: [AskUserQuestion.Answer]) {
+        pending.deny(feedback: AskUserQuestion.result(for: answers))
     }
 
     /// Adds an always-allow rule, then approves the request that prompted it.
@@ -1351,18 +1425,29 @@ extension AppModel {
             ?? model)
     }
 
-    /// Tokens occupying the window right now: the last turn's input, its cache reads, and its
-    /// output. Cumulative session totals are a different number and live under Details.
+    /// Tokens occupying the window right now.
+    ///
+    /// Taken from the most recent model call, not from the `result` frame. A turn is many calls
+    /// and the result's usage adds them all up — with a cached prefix re-read on every call that
+    /// total runs to millions, so using it here showed a conversation at several hundred percent
+    /// of a window it was comfortably inside. What each call carried is the occupancy.
     var contextUsed: Int {
-        guard let usage = lastTurn?.usage else {
-            // No turn has completed in this process. A resumed conversation still occupies its
-            // window, and the transcript is where that number lives until the next turn lands.
-            return recordedUsage?.contextTokens ?? 0
-        }
-        return ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
-                "output_tokens"]
-            .reduce(0) { $0 + (usage[$1]?.intValue ?? 0) }
+        if let occupancy = graph.root?.telemetry.contextTokens, occupancy > 0 { return occupancy }
+        // Nothing has come back in this process yet. A resumed conversation still occupies its
+        // window, and the transcript is where that number lives until the first reply lands.
+        return recordedUsage?.contextTokens ?? 0
     }
+
+    /// Every token this session has sent or received, across every agent in the tree.
+    ///
+    /// Not a proportion of anything: a long conversation re-reads its cached prefix on each call,
+    /// so this passes a million while the window stays half empty. That is what it costs, and it
+    /// is shown as its own figure rather than mixed into the context reading.
+    var tokensSpent: Int {
+        agents.reduce(0) { $0 + $1.telemetry.billedTokens }
+    }
+
+    var tokensSpentLabel: String { tokensSpent.abbreviated }
 
     var contextFraction: Double {
         guard contextWindow > 0 else { return 0 }
@@ -1414,6 +1499,7 @@ extension AppModel {
         if let turns = lastTurn?.numTurns {
             rows.append(UsageRow(label: "Turns", value: "\(turns)"))
         }
+        rows.append(UsageRow(label: "Spent this session", value: tokensSpentLabel))
         return rows
     }
 

@@ -12,7 +12,12 @@ import Foundation
 public struct ApprovalHookInstaller: Sendable {
 
     /// Tools routed through the approval gate. Anything that runs commands or writes to disk.
-    public static let defaultMatchers = ["Bash", "Write", "Edit", "NotebookEdit"]
+    /// `AskUserQuestion` is here for a different reason than the rest: not to gate a dangerous
+    /// call, but because the hook is the only channel a question can reach this app through, and
+    /// the reply it carries is what the agent receives as the tool's result. See `AskUserQuestion`.
+    public static let defaultMatchers = [
+        "Bash", "Write", "Edit", "NotebookEdit", AskUserQuestion.toolName
+    ]
 
     public var helperPath: String
     public var socketPath: String

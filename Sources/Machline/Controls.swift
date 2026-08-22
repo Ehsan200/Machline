@@ -37,6 +37,13 @@ struct Select<Value: Hashable>: View {
     /// list on a fresh machine, for instance.
     var showsSearch: Bool?
     var onSelect: ((Value) -> Void)?
+    /// Command-click, or ⌘Return on the highlighted row: a second destination for an option. The
+    /// project list sends it to a new window instead of switching the one in front. When absent,
+    /// holding ⌘ changes nothing.
+    var onCommandSelect: ((Value) -> Void)?
+    /// One line at the foot of the open menu describing what ⌘ does, so the shortcut is visible
+    /// rather than folklore. Only drawn when `onCommandSelect` is set.
+    var commandHint: String?
 
     @State private var isOpen = false
     @State private var isHovering = false
@@ -70,10 +77,15 @@ struct Select<Value: Hashable>: View {
                 options: options,
                 selection: selection,
                 isTechnical: isTechnical,
-                showsSearch: showsSearch
-            ) { value in
-                selection = value
-                onSelect?(value)
+                showsSearch: showsSearch,
+                commandHint: onCommandSelect == nil ? nil : commandHint
+            ) { value, wantsCommandAction in
+                if wantsCommandAction, let onCommandSelect {
+                    onCommandSelect(value)
+                } else {
+                    selection = value
+                    onSelect?(value)
+                }
                 isOpen = false
             }
         }
@@ -90,7 +102,9 @@ private struct SelectMenu<Value: Hashable>: View {
     let selection: Value
     let isTechnical: Bool
     let showsSearch: Bool?
-    let onChoose: (Value) -> Void
+    let commandHint: String?
+    /// The chosen option, and whether ⌘ was down when it was chosen.
+    let onChoose: (Value, Bool) -> Void
 
     @State private var search = ""
     @State private var highlighted = 0
@@ -122,7 +136,7 @@ private struct SelectMenu<Value: Hashable>: View {
                                 isHighlighted: index == highlighted,
                                 isTechnical: isTechnical
                             ) {
-                                onChoose(option.value)
+                                onChoose(option.value, NSEvent.isCommandHeld)
                             }
                             .id(index)
                         }
@@ -141,6 +155,15 @@ private struct SelectMenu<Value: Hashable>: View {
                 .onChange(of: highlighted) { _, index in
                     proxy.scrollTo(index, anchor: .center)
                 }
+            }
+
+            if let commandHint {
+                Hairline(color: Theme.Colors.border)
+                Text(commandHint)
+                    .font(Theme.Typography.meta)
+                    .foregroundStyle(Theme.Colors.subtle)
+                    .padding(.horizontal, Theme.Space.md)
+                    .padding(.vertical, Theme.Space.sm)
             }
         }
         .frame(minWidth: 240)
@@ -174,7 +197,7 @@ private struct SelectMenu<Value: Hashable>: View {
             return .handled
         case .return, .tab:
             guard filtered.indices.contains(highlighted) else { return .ignored }
-            onChoose(filtered[highlighted].value)
+            onChoose(filtered[highlighted].value, press.modifiers.contains(.command))
             return .handled
         default:
             return .ignored

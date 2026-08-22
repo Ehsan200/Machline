@@ -86,6 +86,17 @@ public struct AgentTelemetry: Sendable, Equatable {
     /// Approvals this agent was blocked on, and how they ended.
     public var approvalsRequested: Int = 0
     public var approvalsDenied: Int = 0
+    /// What the most recent model call actually carried: fresh input, both cache halves, and the
+    /// reply. This is the conversation's occupancy of the context window — one call's worth, never
+    /// a running total, so it cannot exceed the window.
+    public var contextTokens: Int?
+    /// Every token this agent has sent or received, summed over every model call.
+    ///
+    /// Distinct from `contextTokens` on purpose. A long conversation re-reads its cached prefix on
+    /// every call, so this passes a million while the window itself is nowhere near full —
+    /// treating the two as one number is what made a session look as though it had overrun a
+    /// context it was well inside.
+    public var billedTokens: Int = 0
 
     public init() {}
 }

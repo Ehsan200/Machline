@@ -72,7 +72,13 @@ struct ContentView: View {
         // The approval sheet is deliberately modal: an approval that can be ignored is an approval
         // that eventually gets rubber-stamped or times out.
         .sheet(item: ApprovalBinding(model: model)) { pending in
-            ApprovalSheet(model: model, pending: pending)
+            // A question is not an approval, so it gets its own sheet rather than a "deny with
+            // feedback" field pressed into service as an answer box.
+            if AskUserQuestion.isQuestion(pending.payload) {
+                QuestionSheet(model: model, pending: pending)
+            } else {
+                ApprovalSheet(model: model, pending: pending)
+            }
         }
         .sheet(item: Binding(
             get: { model.diffModalPath },

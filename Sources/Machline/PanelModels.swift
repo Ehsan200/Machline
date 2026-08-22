@@ -276,6 +276,19 @@ final class GitPanelModel {
             && !commitDraft.summary.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// What one refresh came back with. `Sendable` so it can cross back from a detached task.
+    private enum RefreshOutcome: Sendable {
+        case notARepository
+        case read(GitStatus, [GitFileDiff], [GitFileDiff], [GitManager.Commit])
+        case failed(String)
+    }
+
+    /// Carries a git failure's text across the actor hop — the error itself need not be `Sendable`.
+    private struct RefreshFailure: Error, CustomStringConvertible {
+        let message: String
+        var description: String { message }
+    }
+
     func refresh() {
         refreshTask?.cancel()
         refreshTask = Task { [manager] in
@@ -284,23 +297,37 @@ final class GitPanelModel {
             guard !Task.isCancelled else { return }
             await MainActor.run { self.isRefreshing = true }
 
-            let result: Result<(GitStatus, [GitFileDiff], [GitFileDiff], [GitManager.Commit]), Error>
-            do {
-                guard try manager.isRepository() else {
-                    await MainActor.run {
-                        self.isRepository = false
-                        self.isRefreshing = false
-                    }
-                    return
+            // Detached on purpose. `Task {}` inside a `@MainActor` type inherits that isolation,
+            // so every one of these `git` calls — each a subprocess this thread waits on — ran on
+            // the main thread and stalled the window for as long as the repository took to answer.
+            let outcome = await Task.detached(priority: .userInitiated) { () -> RefreshOutcome in
+                do {
+                    guard try manager.isRepository() else { return .notARepository }
+                    let status = try manager.status()
+                    return .read(
+                        status,
+                        try manager.unstagedDiffIncludingUntracked(status: status),
+                        try manager.stagedDiff(),
+                        try manager.recentCommits(limit: 15))
+                } catch {
+                    return .failed(String(describing: error))
                 }
-                let status = try manager.status()
-                result = .success((
-                    status,
-                    try manager.unstagedDiffIncludingUntracked(status: status),
-                    try manager.stagedDiff(),
-                    try manager.recentCommits(limit: 15)))
-            } catch {
-                result = .failure(error)
+            }.value
+
+            guard !Task.isCancelled else { return }
+
+            let result: Result<(GitStatus, [GitFileDiff], [GitFileDiff], [GitManager.Commit]), Error>
+            switch outcome {
+            case .notARepository:
+                await MainActor.run {
+                    self.isRepository = false
+                    self.isRefreshing = false
+                }
+                return
+            case .read(let status, let unstaged, let staged, let commits):
+                result = .success((status, unstaged, staged, commits))
+            case .failed(let message):
+                result = .failure(RefreshFailure(message: message))
             }
 
             await MainActor.run {
@@ -395,11 +422,17 @@ final class GitPanelModel {
         commitDraft = ConventionalCommit(kind: .feat, summary: "")
     }
 
-    func generateDraft(model: String?) {
+    /// Writes a message for what is staged.
+    ///
+    /// `fork` is the conversation that made these changes, when there is one: forking it is both
+    /// faster and better informed than a cold run, because the context is already warm and the
+    /// agent knows why it did what it did. With no live session this falls back to a cold run on
+    /// the small model, which is the fast way to summarise a diff from nothing.
+    func generateDraft(fork: CommitDraftGenerator.Fork? = nil) {
         guard !isDrafting else { return }
         isDrafting = true
         Task { [manager] in
-            let generated = try? await CommitDraftGenerator(model: model).draft(for: manager)
+            let generated = try? await CommitDraftGenerator(fork: fork).draft(for: manager)
             await MainActor.run {
                 self.isDrafting = false
                 if let generated { self.commitDraft = generated }
@@ -409,8 +442,16 @@ final class GitPanelModel {
 
     private func perform(_ operation: @escaping @Sendable (GitManager) throws -> Void) {
         Task { [manager] in
-            var failure: String?
-            do { try operation(manager) } catch { failure = String(describing: error) }
+            // Detached for the same reason as `refresh()`: staging a hunk is a `git` subprocess,
+            // and waiting for it on the main thread freezes the window mid-click.
+            let failure = await Task.detached(priority: .userInitiated) { () -> String? in
+                do {
+                    try operation(manager)
+                    return nil
+                } catch {
+                    return String(describing: error)
+                }
+            }.value
             await MainActor.run {
                 self.errorMessage = failure
                 // The summaries carry the ahead/behind counts, and Push is enabled from `ahead`.

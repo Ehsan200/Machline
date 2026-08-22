@@ -126,9 +126,17 @@ struct ContextSummary: View {
                     Text(model.contextUsedLabel)
                         .font(Theme.Typography.monoStrong)
                         .foregroundStyle(Theme.Colors.text)
+                        .help("Context in use — what the last model call carried.")
                     Text("\(model.contextRemainingLabel) left")
                         .font(Theme.Typography.monoMeta)
                         .foregroundStyle(Theme.Colors.subtle)
+                    // Kept separate from the ring: this is everything the session has sent and
+                    // received, which passes the window's size many times over on a long
+                    // conversation and is not a proportion of anything.
+                    Text("\(model.tokensSpentLabel) tokens spent")
+                        .font(Theme.Typography.monoMeta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                        .help("Every token sent or received this session, cached reads included.")
                 }
 
                 Spacer(minLength: 0)
@@ -436,7 +444,7 @@ struct ChangedFileRow: View {
             }
             .padding(.horizontal, Theme.Space.sm)
             .padding(.vertical, 3)
-            .background(isHovering ? Theme.Colors.hover.opacity(0.5) : .clear)
+            .rowSurface(isSelected: false, isHovering: isHovering)
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .contentShape(Rectangle())
         }

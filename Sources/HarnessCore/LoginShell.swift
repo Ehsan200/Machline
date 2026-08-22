@@ -8,8 +8,38 @@ import Foundation
 /// and `$SHELL` is only a fallback for when it cannot be read.
 public enum LoginShell {
 
+    /// Answers computed once per launch.
+    ///
+    /// `path()` shells out to `dscl`, and `waitUntilExit()` spins a runloop while it waits. Called
+    /// from a SwiftUI view body — as the shell picker's option list did — that nested runloop
+    /// drains a Core Animation commit, SwiftUI re-enters its own update, and AttributeGraph aborts
+    /// the process. Answering from the cache after the first call keeps a stray call cheap; the
+    /// real fix is that no view body should ask at all, which is why `prewarm()` exists.
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cachedPath: String?
+    nonisolated(unsafe) private static var cachedAvailable: [String]?
+
+    /// Works the answers out ahead of the interface needing them. Call off the main actor.
+    public static func prewarm() {
+        _ = path()
+        _ = available()
+    }
+
     /// The account's login shell, preferring the directory record over the environment.
     public static func path() -> String {
+        lock.lock()
+        let cached = cachedPath
+        lock.unlock()
+        if let cached { return cached }
+
+        let resolved = resolvePath()
+        lock.lock()
+        cachedPath = resolved
+        lock.unlock()
+        return resolved
+    }
+
+    private static func resolvePath() -> String {
         if let record = fromUserRecord(), FileManager.default.isExecutableFile(atPath: record) {
             return record
         }
@@ -51,6 +81,19 @@ public enum LoginShell {
     /// `/etc/shells` is the system's own list of legitimate login shells, so it needs no
     /// hard-coded set. The login shell is added because a Homebrew fish is often absent from it.
     public static func available() -> [String] {
+        lock.lock()
+        let cached = cachedAvailable
+        lock.unlock()
+        if let cached { return cached }
+
+        let resolved = resolveAvailable()
+        lock.lock()
+        cachedAvailable = resolved
+        lock.unlock()
+        return resolved
+    }
+
+    private static func resolveAvailable() -> [String] {
         var shells: [String] = []
         if let contents = try? String(contentsOfFile: "/etc/shells", encoding: .utf8) {
             shells = contents

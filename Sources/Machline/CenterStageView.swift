@@ -25,6 +25,7 @@ struct CenterStageView: View {
         GeometryReader { geometry in
             content(availableHeight: geometry.size.height)
         }
+        .task { await loadShellOptions() }
     }
 
     private func content(availableHeight: CGFloat) -> some View {
@@ -110,10 +111,20 @@ struct CenterStageView: View {
     private var terminalHeight: CGFloat { draggedTerminalHeight ?? storedTerminalHeight }
 
     /// The login shell first, then everything `/etc/shells` lists.
-    private var shellOptions: [Select<String>.Option] {
-        let login = LoginShell.path()
-        return [.init("", label: (login as NSString).lastPathComponent, detail: "login shell")]
-            + LoginShell.available()
+    ///
+    /// Loaded once into state, never computed in a body. Working this out reads the account's
+    /// directory record, which means a subprocess and a `waitUntilExit` that spins a runloop —
+    /// and a runloop spun inside a view body re-enters SwiftUI's own update and aborts the process
+    /// in AttributeGraph. It was reachable simply by opening the shell pane.
+    @State private var shellOptions: [Select<String>.Option] = []
+
+    private func loadShellOptions() async {
+        let (login, available) = await Task.detached(priority: .userInitiated) {
+            (LoginShell.path(), LoginShell.available())
+        }.value
+        shellOptions =
+            [.init("", label: (login as NSString).lastPathComponent, detail: "login shell")]
+            + available
                 .filter { $0 != login }
                 .map { .init($0, label: ($0 as NSString).lastPathComponent, detail: $0) }
     }
@@ -215,8 +226,44 @@ struct TimelineView: View {
     /// window flinging itself around.
     @State private var hasSettled = false
 
+    /// False while the operator has scrolled up. Two things hang off it: the jump-to-latest pill,
+    /// and the auto-scroll — a timeline that yanks itself to the foot while someone is reading
+    /// three screens up is worse than one that never scrolls at all.
+    @State private var isAtBottom = true
+    /// How many events have landed since they scrolled away from the foot.
+    @State private var unseenCount = 0
+
+    /// The bottom anchor is treated as reached within this many points, so a resting scroll that
+    /// stops a hair short still counts as being at the end.
+    private static let bottomSlack: CGFloat = 24
+
     var body: some View {
         ScrollViewReader { proxy in
+            timeline(proxy)
+                .overlay(alignment: .bottom) {
+                    if !isAtBottom {
+                        jumpToLatest(proxy)
+                            .padding(.bottom, Theme.Space.md)
+                    }
+                }
+        }
+    }
+
+    /// The pill shown when there is more below: says how much, and goes there.
+    private func jumpToLatest(_ proxy: ScrollViewProxy) -> some View {
+        Pill(
+            title: unseenCount > 0 ? "\(unseenCount) new below" : "Jump to latest",
+            systemImage: "arrow.down",
+            isProminent: true
+        ) {
+            unseenCount = 0
+            scrollToBottom(proxy, animated: true)
+        }
+        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+    }
+
+    private func timeline(_ proxy: ScrollViewProxy) -> some View {
+        GeometryReader { viewport in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // What the resumed conversation already contained. Read from the transcript,
@@ -231,7 +278,7 @@ struct TimelineView: View {
                         .padding(.vertical, Theme.Space.lg)
                     }
                     ForEach(model.replay) { entry in
-                        ReplayEntryView(entry: entry)
+                        ReplayEntryView(model: model, entry: entry)
                     }
                     if !model.replay.isEmpty {
                         resumeMarker
@@ -262,26 +309,52 @@ struct TimelineView: View {
                     Color.clear
                         .frame(height: 1)
                         .id(Self.bottomAnchor)
+                        // Where the foot of the conversation currently sits, in the scroll view's
+                        // own space. Compared against the viewport height, it says whether the end
+                        // is on screen — which `ScrollViewProxy` alone will not tell you.
+                        .background(
+                            GeometryReader { anchor in
+                                Color.clear.preference(
+                                    key: TimelineFootKey.self,
+                                    value: anchor.frame(in: .named(Self.scrollSpace)).minY)
+                            })
                 }
                 .padding(.horizontal, Theme.Space.timelinePadding)
                 .padding(.top, Theme.Space.xl)
                 .padding(.bottom, Theme.Space.xl)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .coordinateSpace(name: Self.scrollSpace)
+            .onPreferenceChange(TimelineFootKey.self) { footY in
+                let reached = footY <= viewport.size.height + Self.bottomSlack
+                guard reached != isAtBottom else { return }
+                isAtBottom = reached
+                if reached { unseenCount = 0 }
+            }
             .scrollContentBackground(.hidden)
             // A conversation opens at its foot: the end is where the work is.
             .onChange(of: model.replay.count) { _, count in
                 guard count > 0 else { return }
                 hasSettled = false
+                unseenCount = 0
+                isAtBottom = true
                 scrollToBottom(proxy, animated: false)
             }
             .onChange(of: model.transcriptRevision) {
-                scrollToBottom(proxy, animated: hasSettled)
+                // Only follow the conversation for someone who is already at the end of it.
+                // Otherwise count what has arrived and let the pill offer the trip.
+                if isAtBottom {
+                    scrollToBottom(proxy, animated: hasSettled)
+                } else {
+                    unseenCount += 1
+                }
             }
             .onAppear { scrollToBottom(proxy, animated: false) }
             .selectableTextTint()
         }
     }
+
+    private static let scrollSpace = "timeline.scroll"
 
     /// Scrolls to the foot.
     ///
@@ -341,6 +414,14 @@ struct TimelineView: View {
     }
 }
 
+/// Carries the foot of the timeline's position out of the scroll view.
+private struct TimelineFootKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct TimelineEvent: Identifiable {
     enum Kind {
         case assistantText(UUID, String, String)
@@ -376,17 +457,17 @@ struct TimelineEventView: View {
         case .thinking(_, _, let text):
             thinking(text)
 
-        case .toolCall(_, let use):
+        case .toolCall(let id, let use):
             if let edit = EditPreview(use: use) {
                 DiffCard(preview: edit) { model.openDiffModal(path: edit.path) }
                     .padding(.top, Theme.Space.lg)
             } else {
-                ToolRow(use: use, result: nil)
+                ToolRow(model: model, rowKey: .live(id), use: use, result: nil)
                     .padding(.top, Theme.Space.sm)
             }
 
-        case .toolResult(_, let result, let output):
-            ToolResultRow(result: result, output: output)
+        case .toolResult(let id, let result, let output):
+            ToolResultRow(model: model, rowKey: .live(id), result: result, output: output)
 
         case .turnEnded(_, let result):
             turnSeparator(result)
@@ -500,46 +581,22 @@ struct TimelineEventView: View {
 /// Supporting evidence, not the main story: one compact row carrying name, purpose, status, and a
 /// disclosure control. Closed by default once it has succeeded.
 struct ToolRow: View {
+    @Bindable var model: AppModel
+    /// The transcript entry this row draws, and the key its open/closed state is stored under.
+    let rowKey: AppModel.RowKey
     let use: ToolUse
     let result: ToolResult?
 
-    @State private var isExpanded = false
-    @State private var isHovering = false
+    private var isExpanded: Bool { model.isRowExpanded(rowKey) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeOut(duration: 0.12)) { isExpanded.toggle() }
-            } label: {
-                HStack(spacing: Theme.Space.sm) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.subtle)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-
-                    Text(use.name)
-                        .font(Theme.Typography.controlMedium)
-                        .foregroundStyle(Theme.Colors.muted)
-
-                    Text(summary)
-                        .font(Theme.Typography.monoSmall)
-                        .foregroundStyle(Theme.Colors.subtle)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
-                    Spacer(minLength: Theme.Space.sm)
-
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.Colors.accent)
-                }
-                .padding(.horizontal, Theme.Space.md)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
-                .background(isHovering ? Theme.Colors.surface.opacity(0.5) : .clear)
-            }
-            .buttonStyle(.plain)
-            .onHover { isHovering = $0 }
+            // The same header the replayed rows use, so a live call and a recorded one are the
+            // same row rather than two that merely resemble each other.
+            ToolDisclosureRow(
+                name: use.name,
+                detail: summary,
+                isExpanded: model.rowExpansionBinding(rowKey))
 
             if isExpanded {
                 Text(use.bashCommand ?? use.input.prettyPrinted())
@@ -571,48 +628,22 @@ struct ToolRow: View {
 /// Results stay quiet when they succeed. Failures and blocks stay open, because they are the ones
 /// that change what the operator does next.
 struct ToolResultRow: View {
+    @Bindable var model: AppModel
+    let rowKey: AppModel.RowKey
     let result: ToolResult
     let output: ProcessOutput?
 
-    @State private var isExpanded: Bool
-
-    init(result: ToolResult, output: ProcessOutput?) {
-        self.result = result
-        self.output = output
-        _isExpanded = State(initialValue: result.isError)
-    }
+    /// Failures and blocks open themselves until the operator says otherwise.
+    private var isExpanded: Bool { model.isRowExpanded(rowKey, whenUnset: result.isError) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeOut(duration: 0.12)) { isExpanded.toggle() }
-            } label: {
-                HStack(spacing: Theme.Space.sm) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(Theme.Colors.subtle)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-
-                    Image(systemName: result.isError ? "xmark.circle" : "checkmark")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(result.isError ? Theme.Colors.error : Theme.Colors.success)
-
-                    Text(result.isError ? "Blocked" : "Result")
-                        .font(Theme.Typography.meta)
-                        .foregroundStyle(result.isError ? Theme.Colors.error : Theme.Colors.subtle)
-
-                    Text(firstLine)
-                        .font(Theme.Typography.monoMeta)
-                        .foregroundStyle(Theme.Colors.subtle)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, Theme.Space.md)
-                .padding(.vertical, 5)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            ToolDisclosureRow(
+                name: result.isError ? "Blocked" : "Result",
+                detail: firstLine,
+                statusIcon: result.isError ? "xmark.circle" : "checkmark",
+                statusTint: result.isError ? Theme.Colors.error : Theme.Colors.success,
+                isExpanded: model.rowExpansionBinding(rowKey, whenUnset: result.isError))
 
             if isExpanded {
                 ScrollView {

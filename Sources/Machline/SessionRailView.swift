@@ -212,7 +212,11 @@ struct SessionRailView: View {
                 placeholder: "No project",
                 isTechnical: false,
                 // Always searchable: the list runs to every project on the machine.
-                showsSearch: true)
+                showsSearch: true,
+                onCommandSelect: { path in
+                    openInNewWindow(URL(fileURLWithPath: path))
+                },
+                commandHint: "⌘-click to open in a new window")
 
             Spacer(minLength: 0)
 
@@ -409,6 +413,14 @@ struct SessionRailView: View {
         window.replaceProject(with: url)
     }
 
+    /// The ⌘-click destination: a second window on that project, leaving this one as it was.
+    ///
+    /// Unique, like ⌘O and ⌘N: the operator asked for another window, not for an existing one on
+    /// the same project to be raised.
+    private func openInNewWindow(_ url: URL) {
+        openWindow(id: "session", value: WindowTarget(workspace: url, isUnique: true))
+    }
+
     /// One heading owns the agents beneath it, so no row repeats the folder icon and project name.
     private var projectHeading: some View {
         Button {
@@ -588,7 +600,7 @@ struct SessionRow: View {
             .padding(.horizontal, Theme.Space.railPadding)
             .padding(.vertical, Theme.Space.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(background)
+            .rowSurface(isSelected: isLive, isHovering: isHovering)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -617,16 +629,6 @@ struct SessionRow: View {
         }
     }
 
-    @ViewBuilder
-    private var background: some View {
-        if isLive {
-            Theme.Colors.selection
-        } else if isHovering {
-            Theme.Colors.hover.opacity(0.5)
-        } else {
-            Color.clear
-        }
-    }
 }
 
 extension Date {
@@ -689,7 +691,7 @@ struct AgentRow: View {
             .padding(.horizontal, Theme.Space.railPadding)
             .padding(.vertical, Theme.Space.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(rowBackground)
+            .rowSurface(isSelected: isSelected, isHovering: isHovering)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -705,16 +707,6 @@ struct AgentRow: View {
         }
     }
 
-    @ViewBuilder
-    private var rowBackground: some View {
-        if isSelected {
-            Theme.Colors.selection
-        } else if isHovering {
-            Theme.Colors.hover.opacity(0.5)
-        } else {
-            Color.clear
-        }
-    }
 }
 
 struct AuditRow: View {

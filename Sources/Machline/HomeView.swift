@@ -12,10 +12,17 @@ struct HomeView: View {
     @State private var draft = ""
     @FocusState private var isComposerFocused: Bool
 
+    @Environment(\.openWindow) private var openWindow
+
+    /// Past this many chips the row stops being a glance and becomes a list; the rest stay one
+    /// click away in the rail's project menu.
+    private static let chipLimit = 20
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.xxl) {
                 header
+                projectChips
                 projects
             }
             .padding(.horizontal, Theme.Space.xxl)
@@ -27,7 +34,46 @@ struct HomeView: View {
         .scrollContentBackground(.hidden)
         .task {
             model.loadHome()
+            // The chips come from every project the CLI knows about, not only the handful with
+            // recent sessions below.
+            model.loadKnownProjects()
             isComposerFocused = true
+        }
+    }
+
+    // MARK: - Project chips
+
+    /// Every project as one wrapped row, above the recent-session detail.
+    ///
+    /// The sections below are deep — a project and its conversations — and reaching the tenth
+    /// project meant scrolling past nine of those. The chips are the shallow index over the same
+    /// set: one click to open, ⌘-click for a second window.
+    @ViewBuilder
+    private var projectChips: some View {
+        let all = model.knownProjects.isEmpty ? model.recentProjects : model.knownProjects
+        if !all.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                SectionLabel("Projects", trailing: "\(all.count)")
+
+                ChipFlow(spacing: Theme.Space.sm) {
+                    ForEach(all.prefix(Self.chipLimit), id: \.self) { url in
+                        ProjectChip(
+                            workspace: url,
+                            onOpen: { model.open(workspace: url) },
+                            onOpenInNewWindow: {
+                                openWindow(
+                                    id: "session",
+                                    value: WindowTarget(workspace: url, isUnique: true))
+                            })
+                    }
+                }
+
+                if all.count > Self.chipLimit {
+                    Text("\(all.count - Self.chipLimit) more in the project menu")
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                }
+            }
         }
     }
 
@@ -199,6 +245,85 @@ struct HomeView: View {
     }
 }
 
+/// One project, small enough to sit beside a dozen others.
+private struct ProjectChip: View {
+    let workspace: URL
+    let onOpen: () -> Void
+    let onOpenInNewWindow: () -> Void
+
+    var body: some View {
+        Pill(
+            title: workspace.lastPathComponent,
+            systemImage: "folder",
+            help: "\(workspace.path) — ⌘-click opens a new window"
+        ) {
+            if NSEvent.isCommandHeld { onOpenInNewWindow() } else { onOpen() }
+        }
+        .contextMenu {
+            Button("Open") { onOpen() }
+            Button("Open in New Window") { onOpenInNewWindow() }
+        }
+    }
+}
+
+/// Lays chips out left to right, wrapping onto as many rows as they need.
+///
+/// Neither stack wraps, and a grid would impose one column width on labels that run from `api` to
+/// `internal-tooling-service`, leaving most of the row empty.
+struct ChipFlow: Layout {
+    var spacing: CGFloat = Theme.Space.sm
+
+    private struct Row {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(for: subviews, maxWidth: proposal.width ?? .infinity)
+        let height = rows.reduce(0) { $0 + $1.height }
+            + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: proposal.width ?? (rows.map(\.width).max() ?? 0), height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+    ) {
+        var y = bounds.minY
+        for row in rows(for: subviews, maxWidth: bounds.width) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
+                    proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private func rows(for subviews: Subviews, maxWidth: CGFloat) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let width = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            // A chip wider than the whole row still gets a row of its own rather than vanishing.
+            if width > maxWidth, !current.indices.isEmpty {
+                rows.append(current)
+                current = Row(indices: [index], width: size.width, height: size.height)
+            } else {
+                current.indices.append(index)
+                current.width = width
+                current.height = max(current.height, size.height)
+            }
+        }
+        if !current.indices.isEmpty { rows.append(current) }
+        return rows
+    }
+}
+
 private struct HomeSessionRow: View {
     let title: String
     let age: String
@@ -228,7 +353,7 @@ private struct HomeSessionRow: View {
             }
             .padding(.horizontal, Theme.Space.md)
             .padding(.vertical, Theme.Space.sm)
-            .background(isHovering ? Theme.Colors.hover.opacity(0.6) : Color.clear)
+            .rowSurface(isSelected: false, isHovering: isHovering)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

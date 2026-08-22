@@ -164,6 +164,43 @@ struct PromptEditor: NSViewRepresentable {
 final class PromptTextView: NSTextView {
     weak var coordinator: PromptEditor.Coordinator?
 
+    private var caretObservers: [NSObjectProtocol] = []
+
+    /// Brings the caret back after the window has been away.
+    ///
+    /// `NSTextView` runs the insertion point on a blink timer that stops when its window resigns
+    /// key — and after a display sleep or a lock screen it does not always restart on its own, so
+    /// the composer comes back looking as though it has no cursor at all while still accepting
+    /// typing. Restarting the timer when the window or the app becomes active again is the
+    /// documented way to reassert it.
+    /// Also the teardown: AppKit calls this with no window when the view is removed, which is when
+    /// the observers are dropped.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        for observer in caretObservers { NotificationCenter.default.removeObserver(observer) }
+        caretObservers = []
+        guard let window else { return }
+
+        let centre = NotificationCenter.default
+        let restart: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.window?.firstResponder === self else { return }
+                self.updateInsertionPointStateAndRestartTimer(true)
+            }
+        }
+        caretObservers = [
+            centre.addObserver(
+                forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main,
+                using: restart),
+            centre.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main,
+                using: restart),
+            centre.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main,
+                using: restart)
+        ]
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // A key equivalent is offered to *every* view in the window before the focused one gets
         // `keyDown`, so claiming these unconditionally took them from the shell pane as well: the

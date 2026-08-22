@@ -100,6 +100,7 @@ struct TerminalBlock: View {
 /// One entry from a recorded conversation. Same visual language as the live timeline, so a resumed
 /// session reads as one continuous thread.
 struct ReplayEntryView: View {
+    @Bindable var model: AppModel
     let entry: ReplayEntry
 
     var body: some View {
@@ -126,10 +127,10 @@ struct ReplayEntryView: View {
             .padding(.vertical, Theme.Space.sm)
 
         case .toolCall(let name, let detail):
-            ReplayToolView(name: name, detail: detail)
+            ReplayToolView(model: model, rowKey: .replay(entry.id), name: name, detail: detail)
 
         case .toolResult(let text, let isError):
-            ReplayResultView(text: text, isError: isError)
+            ReplayResultView(model: model, rowKey: .replay(entry.id), text: text, isError: isError)
         }
     }
 
@@ -155,10 +156,13 @@ struct ReplayEntryView: View {
 
 /// A recorded tool call. Collapsed to one row; expanding shows the command as a terminal block.
 struct ReplayToolView: View {
+    @Bindable var model: AppModel
+    /// Keys this row's open/closed state, which outlives the row itself — see `isRowExpanded`.
+    let rowKey: AppModel.RowKey
     let name: String
     let detail: String
 
-    @State private var isExpanded = false
+    private var isExpanded: Bool { model.isRowExpanded(rowKey) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -167,7 +171,7 @@ struct ReplayToolView: View {
                 detail: detail,
                 statusIcon: nil,
                 statusTint: Theme.Colors.subtle,
-                isExpanded: $isExpanded)
+                isExpanded: model.rowExpansionBinding(rowKey))
 
             if isExpanded {
                 TerminalBlock(command: detail, stdout: "", stderr: "")
@@ -185,16 +189,12 @@ struct ReplayToolView: View {
 /// A recorded tool result. Errors open by default — they are the ones that changed what happened
 /// next.
 struct ReplayResultView: View {
+    @Bindable var model: AppModel
+    let rowKey: AppModel.RowKey
     let text: String
     let isError: Bool
 
-    @State private var isExpanded: Bool
-
-    init(text: String, isError: Bool) {
-        self.text = text
-        self.isError = isError
-        _isExpanded = State(initialValue: isError)
-    }
+    private var isExpanded: Bool { model.isRowExpanded(rowKey, whenUnset: isError) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -203,7 +203,7 @@ struct ReplayResultView: View {
                 detail: text.split(separator: "\n").first.map(String.init) ?? "",
                 statusIcon: isError ? "xmark.circle" : "checkmark",
                 statusTint: isError ? Theme.Colors.error : Theme.Colors.success,
-                isExpanded: $isExpanded)
+                isExpanded: model.rowExpansionBinding(rowKey, whenUnset: isError))
 
             if isExpanded, !text.isEmpty {
                 TerminalBlock(

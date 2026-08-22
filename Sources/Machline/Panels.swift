@@ -362,7 +362,7 @@ struct GitWorkbenchView: View {
                 // Reads the staged diff and writes a Conventional Commits message for it.
                 // Disabled with nothing staged, because there would be nothing to describe.
                 Button {
-                    git.generateDraft(model: model.model)
+                    git.generateDraft(fork: model.commitDraftFork)
                 } label: {
                     HStack(spacing: Theme.Space.xs) {
                         if git.isDrafting {
