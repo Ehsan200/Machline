@@ -20,10 +20,13 @@ machine that built them — hence the right-click.
 
 After that it updates itself. **Check for Updates…** in the application menu — or the version badge
 beside the tabs — asks GitHub what exists; a newer release then downloads on its own, is checked
-against the digest GitHub published for it, replaces this bundle, and reopens. The check is the only
-part that is automatic-once-asked-for: nothing is polled on a timer, and a download that does not
-match its digest is discarded rather than installed. If a session is mid-turn, the build waits and
-the banner offers **Install and Relaunch** instead, since installing means quitting.
+against the digest GitHub published for it, replaces this bundle, and reopens. A download that does
+not match its digest is discarded rather than installed. If a session is mid-turn, the build waits
+and the banner offers **Install and Relaunch** instead, since installing means quitting.
+
+The same check also runs on its own, at most once a day, and asks nothing else: it is one request to
+GitHub's releases API, and **Check Automatically** beside the menu item turns it off. Everything a
+daily answer can do, an asked-for one could already do.
 
 To build it yourself, see [Developing](#developing).
 

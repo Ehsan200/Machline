@@ -27,6 +27,9 @@ final class AppModel: Identifiable {
     /// command list, the approval mode, the recent projects — was simply missing everywhere else.
     init() {
         loadPersistedSettings()
+        // Somewhere for an automatic check to land. Held weakly there, so this does not outlive
+        // the window it belongs to.
+        UpdateScheduler.shared.register(self)
     }
 
     private func loadPersistedSettings() {
@@ -483,8 +486,10 @@ final class AppModel: Identifiable {
 
     /// Asks GitHub whether there is a newer release.
     ///
-    /// Only ever run when asked. This is the app's single outbound network request, and leaving it
-    /// on a timer would make "Machline talks to nothing but your own CLI" untrue by default.
+    /// This is the app's single outbound network request. It runs when asked — the menu item, the
+    /// version badge — and, unless the operator turns that off, once a day on its own; the daily
+    /// one comes through here rather than through a path of its own, so an unattended answer can
+    /// install nothing an asked-for one would not. See `UpdateScheduler` for when it fires.
     func checkForUpdates() {
         guard !isCheckingForUpdates else { return }
         // A transfer belongs to the offer that started it. Re-checking mid-download would replace

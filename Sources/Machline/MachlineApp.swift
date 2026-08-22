@@ -90,6 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // write to a vanished peer should be an error to handle, never the end of the app.
         signal(SIGPIPE, SIG_IGN)
     }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Waits for a window to exist before it asks anything — see `UpdateScheduler.checkIfDue`.
+        UpdateScheduler.shared.start()
+    }
 }
 
 /// The open panel, in one place so the menu and the rail present the same thing.
@@ -181,8 +186,14 @@ extension FocusedValues {
 struct UpdateCommand: View {
     @FocusedValue(\.windowModel) private var window
 
+    @State private var scheduler = UpdateScheduler.shared
+
     var body: some View {
         Button("Check for Updates…") { window?.current.checkForUpdates() }
             .disabled(window == nil)
+
+        // The daily check is the app talking to GitHub without being asked, so the switch for it
+        // sits next to the manual one rather than in a settings window nobody opens.
+        Toggle("Check Automatically", isOn: $scheduler.isEnabled)
     }
 }
