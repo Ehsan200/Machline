@@ -51,16 +51,17 @@ private struct TerminalRepresentable: NSViewRepresentable {
         environment.append("LANG=\(ProcessInfo.processInfo.environment["LANG"] ?? "en_US.UTF-8")")
         environment.append("SHELL=\(executable)")
 
+        // The shell is forked *in* the project, rather than sent there by a `cd` typed at its
+        // prompt once it is up. Typing it works, but the shell records what it is typed: the first
+        // Up-arrow in every new terminal recalled `cd '/some/project' && clear`, one keystroke
+        // ahead of whatever the operator actually last ran. The child chdirs before it execs, so
+        // there is nothing to hide with a `clear` either.
         view.startProcess(
             executable: executable,
             args: LoginShell.loginArguments(for: executable),
             environment: environment,
-            execName: nil)
-
-        // `startProcess` does not take a working directory, so the shell is sent there once it is
-        // up. Quoted, because a project path may contain spaces.
-        let path = workingDirectory.path.replacingOccurrences(of: "'", with: "'\\''")
-        view.send(txt: "cd '\(path)' && clear\n")
+            execName: nil,
+            currentDirectory: workingDirectory.path)
 
         return view
     }
