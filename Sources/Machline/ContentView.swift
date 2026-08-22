@@ -40,6 +40,8 @@ struct ContentView: View {
                 // three-pane frame around a landing page is just chrome.
                 if model.workspace == nil {
                     HomeView(model: model)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Theme.Colors.canvas)
                 } else {
                 HSplitView {
                     SessionRailView(model: model, window: window)

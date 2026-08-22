@@ -13,110 +13,15 @@ struct HomeView: View {
     @FocusState private var isComposerFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            content
-            Hairline()
-            scratchComposer
-        }
-    }
-
-    /// Ask something without choosing a project first.
-    ///
-    /// The homepage used to be a list and nothing else, so the shortest path to a question was
-    /// open a project, wait, then type — for a question that had nothing to do with that project.
-    /// Typing here starts a scratch chat instead, which runs with no tools at all.
-    private var scratchComposer: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            HStack(alignment: .top, spacing: Theme.Space.md) {
-                Image(systemName: "bubble.left")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.Colors.subtle)
-                    .padding(.top, 3)
-
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: $draft)
-                        .font(Theme.Typography.prose)
-                        .foregroundStyle(Theme.Colors.textStrong)
-                        .scrollContentBackground(.hidden)
-                        .background(.clear)
-                        .focused($isComposerFocused)
-                        .frame(height: 52)
-                        .onKeyPress(phases: .down) { press in
-                            guard press.key == .return,
-                                  !press.modifiers.contains(.shift) else { return .ignored }
-                            start()
-                            return .handled
-                        }
-
-                    if draft.isEmpty {
-                        Text("Ask anything — no project, no tools")
-                            .font(Theme.Typography.prose)
-                            .foregroundStyle(Theme.Colors.subtle)
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-                }
-
-                QuietButton(
-                    title: "Send",
-                    role: .primary,
-                    isEnabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ) {
-                    start()
-                }
-            }
-
-            Text("Scratch chats have no tools: nothing is read, written, or run.")
-                .font(Theme.Typography.meta)
-                .foregroundStyle(Theme.Colors.subtle)
-        }
-        .padding(Theme.Space.lg)
-        .frame(maxWidth: 760)
-        .frame(maxWidth: .infinity)
-        .background(Theme.Colors.panel)
-    }
-
-    private func start() {
-        let text = draft
-        draft = ""
-        model.openScratch(startingWith: text)
-    }
-
-    private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            VStack(alignment: .leading, spacing: Theme.Space.xxl) {
                 header
-
-                if model.isLoadingHome && model.homeProjects.isEmpty {
-                    HStack(spacing: Theme.Space.sm) {
-                        Spinner(size: 11, color: Theme.Colors.subtle)
-                        Text("Reading your projects…")
-                            .font(Theme.Typography.meta)
-                            .foregroundStyle(Theme.Colors.subtle)
-                    }
-                } else if model.homeProjects.isEmpty && !model.isLoadingHome {
-                    Text("No conversations on this machine yet. Open a project to start one.")
-                        .font(Theme.Typography.control)
-                        .foregroundStyle(Theme.Colors.subtle)
-                } else {
-                    ForEach(model.homeProjects, id: \.workspace) { project in
-                        projectSection(project.workspace, sessions: project.sessions)
-                    }
-
-                    // Says so rather than leaving the operator wondering whether this is all of it.
-                    if model.isLoadingHome {
-                        HStack(spacing: Theme.Space.sm) {
-                            Spinner(size: 10, color: Theme.Colors.subtle)
-                            Text("Refreshing…")
-                                .font(Theme.Typography.meta)
-                                .foregroundStyle(Theme.Colors.subtle)
-                        }
-                    }
-                }
+                projects
             }
-            .padding(Theme.Space.xxl)
-            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, Theme.Space.xxl)
+            .padding(.top, 56)
+            .padding(.bottom, Theme.Space.xxl)
+            .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .scrollContentBackground(.hidden)
@@ -126,28 +31,128 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - Header
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Text("Machline")
-                .font(.system(size: 24, weight: .semibold))
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            Text("What are we working on?")
+                .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(Theme.Colors.textStrong)
-            Text("Pick up where you left off, or open a project.")
-                .font(Theme.Typography.prose)
-                .foregroundStyle(Theme.Colors.muted)
+
+            // The composer is the page's first action, not a band at its foot: the shortest path
+            // to a question should be typing, and a footer made it the last thing found.
+            composer
 
             HStack(spacing: Theme.Space.md) {
-                QuietButton(title: "Open Project…", role: .primary) {
+                QuietButton(title: "Open a project…") {
                     guard let url = WorkspacePicker.choose() else { return }
                     model.open(workspace: url)
                 }
                 Text("⌘O")
                     .font(Theme.Typography.monoMeta)
                     .foregroundStyle(Theme.Colors.subtle)
+                Spacer(minLength: 0)
+            }
+        }
+    }
 
-                // Not every question belongs to a repository, and opening one to ask an unrelated
-                // question files the answer in that repository's history.
-                QuietButton(title: "Scratch chat") { model.openScratch() }
-                    .help("A chat with no project and no tools")
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $draft)
+                    .font(Theme.Typography.prose)
+                    .foregroundStyle(Theme.Colors.textStrong)
+                    .scrollContentBackground(.hidden)
+                    .background(.clear)
+                    .focused($isComposerFocused)
+                    .frame(height: 76)
+                    .padding(.horizontal, Theme.Space.md - 5)
+                    .padding(.top, Theme.Space.md - 4)
+                    .onKeyPress(phases: .down) { press in
+                        guard press.key == .return,
+                              !press.modifiers.contains(.shift) else { return .ignored }
+                        start()
+                        return .handled
+                    }
+
+                if draft.isEmpty {
+                    Text("Ask anything…")
+                        .font(Theme.Typography.prose)
+                        .foregroundStyle(Theme.Colors.subtle)
+                        .padding(.horizontal, Theme.Space.md)
+                        .padding(.top, Theme.Space.md)
+                        .allowsHitTesting(false)
+                }
+            }
+
+            HStack(spacing: Theme.Space.sm) {
+                // Says what this is without a paragraph explaining it.
+                Label("no project · no tools", systemImage: "shield")
+                    .font(Theme.Typography.meta)
+                    .foregroundStyle(Theme.Colors.subtle)
+                    .labelStyle(.titleAndIcon)
+
+                Spacer(minLength: Theme.Space.md)
+
+                Text("↵")
+                    .font(Theme.Typography.monoMeta)
+                    .foregroundStyle(Theme.Colors.subtle)
+
+                QuietButton(
+                    title: "Send",
+                    role: .primary,
+                    isEnabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ) {
+                    start()
+                }
+            }
+            .padding(.horizontal, Theme.Space.md)
+            .padding(.bottom, Theme.Space.sm)
+            .padding(.top, Theme.Space.xs)
+        }
+        .background(Theme.Colors.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    isComposerFocused ? Theme.Colors.accent.opacity(0.55) : Theme.Colors.border,
+                    lineWidth: 1))
+        .animation(.easeOut(duration: 0.12), value: isComposerFocused)
+    }
+
+    private func start() {
+        let text = draft
+        draft = ""
+        model.openScratch(startingWith: text)
+    }
+
+    // MARK: - Projects
+
+    @ViewBuilder
+    private var projects: some View {
+        if model.isLoadingHome && model.homeProjects.isEmpty {
+            HStack(spacing: Theme.Space.sm) {
+                Spinner(size: 11, color: Theme.Colors.subtle)
+                Text("Reading your projects…")
+                    .font(Theme.Typography.meta)
+                    .foregroundStyle(Theme.Colors.subtle)
+            }
+        } else if !model.homeProjects.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                SectionLabel("Recent")
+
+                ForEach(model.homeProjects, id: \.workspace) { project in
+                    projectSection(project.workspace, sessions: project.sessions)
+                }
+
+                if model.isLoadingHome {
+                    HStack(spacing: Theme.Space.sm) {
+                        Spinner(size: 10, color: Theme.Colors.subtle)
+                        Text("Refreshing…")
+                            .font(Theme.Typography.meta)
+                            .foregroundStyle(Theme.Colors.subtle)
+                    }
+                }
             }
         }
     }

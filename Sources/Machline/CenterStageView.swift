@@ -62,8 +62,14 @@ struct CenterStageView: View {
                 }
             }
 
-            if model.isTerminalVisible, let workspace = model.workspace?.url {
+            // Mounted once opened and collapsed rather than removed when hidden: tearing the view
+            // down ends the shell, so a running build would die every time the pane was toggled.
+            if model.hasOpenedTerminal, let workspace = model.workspace?.url {
                 terminalSection(workspace: workspace, availableHeight: availableHeight)
+                    .frame(height: model.isTerminalVisible ? nil : 0)
+                    .opacity(model.isTerminalVisible ? 1 : 0)
+                    .allowsHitTesting(model.isTerminalVisible)
+                    .clipped()
             }
 
             ResizeHandle(
@@ -138,8 +144,11 @@ struct CenterStageView: View {
                     options: shellOptions)
 
                 QuietButton(title: "Restart") { model.restartTerminal() }
-                IconButton(systemName: "xmark", help: "Hide the shell (⌃`)") {
+                IconButton(systemName: "chevron.down", help: "Hide the shell (⌃`)") {
                     model.isTerminalVisible = false
+                }
+                IconButton(systemName: "xmark", help: "Close the shell and end it") {
+                    model.closeTerminal()
                 }
             }
             .padding(.horizontal, Theme.Space.md)

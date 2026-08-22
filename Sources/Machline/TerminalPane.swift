@@ -67,13 +67,35 @@ private struct TerminalRepresentable: NSViewRepresentable {
 
     func updateNSView(_ view: LocalProcessTerminalView, context: Context) {}
 
+    /// Ends the shell when the view goes away.
+    ///
+    /// Without this, hiding the pane tore down the view and left its `fork`ed shell running with
+    /// nothing attached to it. Toggling repeatedly stacked up orphans — each holding the project
+    /// directory open and, on a login shell, whatever its profile started.
+    static func dismantleNSView(_ view: LocalProcessTerminalView, coordinator: Coordinator) {
+        coordinator.terminate(view)
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
+        private var hasTerminated = false
+
+        func terminate(_ view: LocalProcessTerminalView) {
+            guard !hasTerminated else { return }
+            hasTerminated = true
+            // SIGHUP is what a closing terminal sends: the shell runs its exit handling rather
+            // than being killed outright, and its children hang up with it.
+            let pid = view.process.shellPid
+            if pid > 0 { kill(pid, SIGHUP) }
+        }
+
         func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
         func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-        func processTerminated(source: TerminalView, exitCode: Int32?) {}
+        func processTerminated(source: TerminalView, exitCode: Int32?) {
+            hasTerminated = true
+        }
     }
 
     /// Gruvbox dark-hard, in SwiftTerm's 16-colour order.

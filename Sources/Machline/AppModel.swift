@@ -445,8 +445,18 @@ final class AppModel: Identifiable {
     /// Bumped to replace an exited shell with a fresh one.
     private(set) var terminalGeneration = 0
 
+    /// True once the shell has been opened in this session, so the pane can stay mounted.
+    private(set) var hasOpenedTerminal = false
+
     func toggleTerminal() {
         isTerminalVisible.toggle()
+        if isTerminalVisible { hasOpenedTerminal = true }
+    }
+
+    /// Ends the shell and unmounts the pane.
+    func closeTerminal() {
+        isTerminalVisible = false
+        hasOpenedTerminal = false
     }
 
     func restartTerminal() {
