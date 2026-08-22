@@ -30,7 +30,7 @@ public struct MCPServerDefinition: Sendable, Hashable, Codable, Identifiable {
     public var transport: MCPTransport
     public var isEnabled: Bool
     /// Route stdio traffic through the harness proxy so it can be inspected. Only meaningful for
-    /// stdio servers (README, Runtime).
+    /// stdio servers (docs/RUNTIME.md).
     public var isInspected: Bool
 
     public init(

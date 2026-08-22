@@ -150,7 +150,7 @@ struct FrameDecodingTests {
         #expect(inits[1].tools.contains { $0.hasPrefix("mcp__") })
     }
 
-    /// Evidence for README, Runtime Finding 4. `p8` ran with `--setting-sources ""` and no strict flag;
+    /// Evidence for docs/RUNTIME.md Finding 4. `p8` ran with `--setting-sources ""` and no strict flag;
     /// `p7` added `--strict-mcp-config`. Only the latter is isolated.
     @Test("Only --strict-mcp-config isolates a session from ambient MCP servers")
     func strictMCPConfigIsolatesSession() throws {

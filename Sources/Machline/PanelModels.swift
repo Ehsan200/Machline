@@ -36,6 +36,9 @@ final class GitPanelModel {
     var showStagedSide = false
     var commitDraft = ConventionalCommit(kind: .feat, summary: "")
     private(set) var isDrafting = false
+    /// Why the last draft did not arrive. A spinner that stops and leaves the field as it was is
+    /// indistinguishable from a button that does nothing.
+    private(set) var draftError: String?
 
     // MARK: Remote
 
@@ -431,12 +434,40 @@ final class GitPanelModel {
     func generateDraft(fork: CommitDraftGenerator.Fork? = nil) {
         guard !isDrafting else { return }
         isDrafting = true
+        draftError = nil
         Task { [manager] in
-            let generated = try? await CommitDraftGenerator(fork: fork).draft(for: manager)
-            await MainActor.run {
-                self.isDrafting = false
-                if let generated { self.commitDraft = generated }
+            do {
+                let generated = try await CommitDraftGenerator(fork: fork).draft(for: manager)
+                await MainActor.run {
+                    self.isDrafting = false
+                    self.commitDraft = generated
+                }
+            } catch {
+                let message = Self.describe(draftError: error)
+                await MainActor.run {
+                    self.isDrafting = false
+                    self.draftError = message
+                }
             }
+        }
+    }
+
+    func dismissDraftError() {
+        draftError = nil
+    }
+
+    private static func describe(draftError error: Error) -> String {
+        guard let failure = error as? CommitDraftGenerator.Failure else {
+            return "The draft did not arrive."
+        }
+        switch failure {
+        case .nothingStaged:
+            return "Nothing is staged to describe."
+        case .generationFailed(let detail):
+            let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "The agent could not be run." : trimmed
+        case .unusableResponse:
+            return "The agent answered with something that was not a commit message."
         }
     }
 

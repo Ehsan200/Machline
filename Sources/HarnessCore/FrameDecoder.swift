@@ -2,7 +2,7 @@ import Foundation
 
 /// Decodes one control-plane line into a `Frame`.
 ///
-/// Permissive by contract (README, Runtime): a line that is not valid JSON yields `.malformed` rather than
+/// Permissive by contract (docs/RUNTIME.md): a line that is not valid JSON yields `.malformed` rather than
 /// throwing, so one bad line never tears down a live session. A line that *is* valid JSON always
 /// yields a `Frame`, even when its `type` is unrecognised.
 public struct FrameDecoder: Sendable {

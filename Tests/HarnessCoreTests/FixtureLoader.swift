@@ -3,7 +3,7 @@ import Testing
 @testable import HarnessCore
 
 /// Loads an archived probe transcript. These are real CLI 2.1.237 output, captured in `probes/`,
-/// and they are the contract test suite for the frame schema (README, Runtime).
+/// and they are the contract test suite for the frame schema (docs/RUNTIME.md).
 enum Fixture: String, CaseIterable {
     case plainTurn = "p1"
     case bashToolCall = "p2"

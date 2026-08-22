@@ -18,6 +18,27 @@ struct CommitDraftIsolationTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).isEmpty)
     }
 
+    /// The scratch directory now comes back symlink-resolved. `$TMPDIR` sits under `/var`, which
+    /// links to `/private/var`, and the CLI files a transcript under the resolved path — so an
+    /// unresolved one left every draft behind as a project the operator never opened.
+    @Test("The scratch directory is where the CLI will actually file the run")
+    func scratchDirectoryIsResolved() throws {
+        let scratch = try CommitDraftGenerator.makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        #expect(scratch.path == scratch.resolvingSymlinksInPath().path)
+    }
+
+    /// The generator runs the binary it resolved, not `/usr/bin/env claude`. Launched from Finder
+    /// the app inherits `launchd`'s `PATH`, where a Homebrew or npm `claude` does not exist — the
+    /// spawn then failed silently and Suggest span and stopped with nothing to show for it.
+    @Test("The agent binary is resolved rather than left to the inherited PATH")
+    func executableIsResolved() throws {
+        let resolved = try SessionSupervisor.resolve(executable: "sh")
+        #expect(resolved.path.hasSuffix("/sh"))
+        #expect(FileManager.default.isExecutableFile(atPath: resolved.path))
+        #expect(!SessionSupervisor.inheritedEnvironment().isEmpty)
+    }
+
     @Test("Each run gets its own scratch directory")
     func scratchDirectoriesAreUnique() throws {
         let first = try CommitDraftGenerator.makeScratchDirectory()

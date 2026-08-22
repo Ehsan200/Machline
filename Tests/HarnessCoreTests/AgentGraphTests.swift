@@ -185,7 +185,7 @@ struct AgentGraphTests {
     // MARK: - Steering
 
     /// A steer is queued when written and only becomes delivered when the agent echoes it back
-    /// (README, Runtime). The distinction is what stops a multi-minute wait from reading as a hang.
+    /// (docs/RUNTIME.md). The distinction is what stops a multi-minute wait from reading as a hang.
     @Test("A steer stays queued until the replay echo confirms consumption")
     func steerQueuedThenDelivered() throws {
         var graph = AgentGraph()

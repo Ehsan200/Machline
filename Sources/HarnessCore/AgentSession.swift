@@ -8,13 +8,13 @@ public enum SessionUpdate: Sendable {
     case approvalPending(PendingApproval)
     /// Every approval outcome, including auto-resolved ones — the audit trail.
     case approvalResolved(ApprovalRequest, ApprovalDecision)
-    /// A line on the frame stream that was not valid JSON. Non-fatal by design (README, Runtime).
+    /// A line on the frame stream that was not valid JSON. Non-fatal by design (docs/RUNTIME.md).
     case malformedLine(line: String, reason: String)
     case standardError(String)
     case turnCompleted(TurnResult)
     case exited(status: Int32)
     /// The approval channel failed. Because a dead broker plus an expired hook means silent
-    /// execution, this is a degraded-mode signal the UI must show prominently (README, Runtime).
+    /// execution, this is a degraded-mode signal the UI must show prominently (docs/RUNTIME.md).
     case approvalChannelFailure(String)
 }
 
@@ -94,7 +94,7 @@ public actor AgentSession {
         return stream
     }
 
-    /// Injects a steer. Queued, not immediate — delivered at the next turn boundary (README, Runtime).
+    /// Injects a steer. Queued, not immediate — delivered at the next turn boundary (docs/RUNTIME.md).
     public func send(steer text: String) async throws {
         try await supervisor.send(userMessage: text)
         emit(.graphChanged(graph.noteSteerQueued(text: text)))

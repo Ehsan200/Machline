@@ -168,7 +168,7 @@ public struct GitManager: Sendable {
     /// Creates a commit from the current index.
     ///
     /// Requires a human trigger by construction: nothing in this type commits as a side effect of
-    /// staging (README, Runtime).
+    /// staging (docs/RUNTIME.md).
     @discardableResult
     public func commit(message: String, allowEmpty: Bool = false) throws -> String {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -2,7 +2,7 @@ import Foundation
 
 /// A fully dynamic JSON value.
 ///
-/// The CLI's frame schema is a moving target across releases (README, Runtime), so every frame retains its
+/// The CLI's frame schema is a moving target across releases (docs/RUNTIME.md), so every frame retains its
 /// complete original payload as a `JSONValue`. Typed views are derived *from* this rather than
 /// replacing it: an unrecognised frame, an unknown content-block type, or a field that changed shape
 /// upstream is preserved verbatim and can still be displayed raw instead of being dropped.

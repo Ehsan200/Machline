@@ -256,10 +256,16 @@ final class AppModel: Identifiable {
     ///
     /// Paths inside the project are written relative to it, which is both shorter to read and what
     /// the agent resolves against; anything outside keeps its absolute path.
+    ///
+    /// A file the agent's process cannot reach is copied somewhere it can first — see
+    /// `AttachmentStore`. A dragged screenshot is handed over in a directory macOS scopes to this
+    /// app alone, so mentioning it where it lies gives the agent a path that reads back as a
+    /// permission error.
     func mentionDroppedFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         let root = workspace?.url.standardizedFileURL.path
-        let mentions = urls.map { url -> String in
+        let mentions = urls.map { dropped -> String in
+            let url = Self.reachable(dropped)
             let path = url.standardizedFileURL.path
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
@@ -278,6 +284,24 @@ final class AppModel: Identifiable {
         if !promptDraft.isEmpty, !promptDraft.hasSuffix(" ") { promptDraft += " " }
         promptDraft += mentions.joined(separator: " ") + " "
         dismissCompletions()
+    }
+
+    /// The dropped file, or a copy of it the agent is able to open.
+    ///
+    /// Best-effort: a copy that fails leaves the original path in the prompt, which is what would
+    /// have been there anyway. Directories are left alone — a drop box only ever hands over files,
+    /// and copying a tree because it sits in `/tmp` would be a surprise.
+    private static func reachable(_ url: URL) -> URL {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue,
+              AttachmentStore.isUnreachableByAgent(url)
+        else { return url }
+
+        let store = AttachmentStore()
+        guard let copy = try? store.adopt(url) else { return url }
+        store.prune()
+        return copy
     }
 
     func dismissCompletions() {
@@ -461,6 +485,12 @@ final class AppModel: Identifiable {
     /// on a timer would make "Machline talks to nothing but your own CLI" untrue by default.
     func checkForUpdates() {
         guard !isCheckingForUpdates else { return }
+        // A transfer belongs to the offer that started it. Re-checking mid-download would replace
+        // that offer underneath it and take its Cancel button off the banner, leaving a transfer
+        // running with nothing able to stop it; the badge waits instead.
+        if case .running = updateDownload { return }
+        // A finished or failed transfer belonged to the previous answer, so the new one starts clean.
+        updateDownload = .idle
         isCheckingForUpdates = true
         let check = UpdateCheck(repository: updateRepository, currentVersion: appVersion)
         Task {
@@ -1637,7 +1667,29 @@ extension AppModel {
     }
 
     func diff(for path: String) -> GitFileDiff? {
-        sessionChanges.first { $0.newPath == path }
+        let wanted = repositoryRelativePath(path)
+        return sessionChanges.first { $0.newPath == wanted }
+    }
+
+    /// A path as Git reports it: relative to the repository root.
+    ///
+    /// The Changes list already speaks that language, but a diff opened from the timeline does not:
+    /// a tool call carries `file_path` as an absolute path, so comparing it to `newPath` never
+    /// matched and Expand opened a modal that said the file was no longer in the working tree.
+    ///
+    /// The repository first, then the workspace, for the same reason `fileURL(for:)` tries both —
+    /// a repository discovered below the workspace is not the same directory.
+    func repositoryRelativePath(_ path: String) -> String {
+        guard path.hasPrefix("/") else { return path }
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+
+        for base in [git?.activeRepository, workspace?.url].compactMap({ $0 }) {
+            let root = base.standardizedFileURL.path
+            if standardized.hasPrefix(root + "/") {
+                return String(standardized.dropFirst(root.count + 1))
+            }
+        }
+        return standardized
     }
 
     /// The porcelain status letter for a path, so a rename or delete reads correctly rather than
@@ -1646,7 +1698,7 @@ extension AppModel {
         // Indexed rather than scanned: this is called once per visible row, and a linear search
         // per row makes the Changes list quadratic in a repository with many changed files.
         _ = sessionChanges
-        guard let file = changesCache?.statuses[path] else { return "M" }
+        guard let file = changesCache?.statuses[repositoryRelativePath(path)] else { return "M" }
         if file.isUntracked { return "A" }
         let change = file.indexChange != .unmodified ? file.indexChange : file.worktreeChange
         switch change {

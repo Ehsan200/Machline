@@ -338,25 +338,35 @@ struct DisclosureSection<Content: View>: View {
 
 /// A small spinning indicator for work in flight.
 ///
-/// A static glyph on a button that is doing something reads as a stuck button. Driven by an
-/// explicit `isActive` flag rather than by appearing and disappearing, so the animation restarts
-/// cleanly each time rather than inheriting a half-finished rotation.
+/// A static glyph on a button that is doing something reads as a stuck button.
+///
+/// The angle is derived from the clock rather than driven by a flag an `onAppear` sets. A spinner
+/// is put on screen by the same state change that starts the work — the version badge turning into
+/// one, a panel beginning a fetch — so its `onAppear` ran inside the update that inserted it, and
+/// writing `@State` there is a value set during a graph update, which AttributeGraph aborts on
+/// rather than merely warns about. Nothing here writes state, so there is no such window; it also
+/// picks up mid-turn instead of restarting, which is what a continuous spinner should do.
 struct Spinner: View {
     var size: CGFloat = 10
     var color: Color = Theme.Colors.accent
 
-    @State private var isSpinning = false
+    /// One turn per period, matching the animation this replaced.
+    private static let period: TimeInterval = 0.9
 
     var body: some View {
-        Image(systemName: "arrow.triangle.2.circlepath")
-            .font(.system(size: size, weight: .medium))
-            .foregroundStyle(color)
-            .rotationEffect(.degrees(isSpinning ? 360 : 0))
-            .animation(
-                .linear(duration: 0.9).repeatForever(autoreverses: false),
-                value: isSpinning)
-            .onAppear { isSpinning = true }
-            .onDisappear { isSpinning = false }
+        // Qualified: the app has a `TimelineView` of its own, for the event timeline.
+        SwiftUI.TimelineView(.animation) { context in
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: size, weight: .medium))
+                .foregroundStyle(color)
+                .rotationEffect(.degrees(Self.angle(at: context.date)))
+        }
+    }
+
+    static func angle(at date: Date) -> Double {
+        let elapsed = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: period)
+        return elapsed / period * 360
     }
 }
 

@@ -2,7 +2,7 @@ import Foundation
 
 /// Launch configuration for one root session.
 ///
-/// The flag set is fixed by README, Runtime and probe-verified. `--verbose` is not optional: without it
+/// The flag set is fixed by docs/RUNTIME.md and probe-verified. `--verbose` is not optional: without it
 /// the CLI emits no streaming frames in `-p` mode.
 ///
 /// What the session inherits from the machine is chosen by `isolation`; read its documentation
@@ -34,14 +34,18 @@ public struct SessionConfiguration: Sendable {
     public var model: String?
     /// Base tool set (`--tools`). `nil` leaves the CLI default in place.
     public var tools: [String]?
-    /// Static denylist (`--disallowedTools`). This is the crash-proof backstop from README, Runtime
+    /// Static denylist (`--disallowedTools`). This is the crash-proof backstop from docs/RUNTIME.md
     /// Finding 3 — the only enforcement that survives the app dying — so it defaults to non-empty.
     public var disallowedTools: [String]
+    /// Directories the session may read outside its project (`--add-dir`).
+    ///
+    /// See `attachmentDirectories` for why this is not empty by default.
+    public var additionalDirectories: [URL]
     public var settingsPath: URL?
     public var mcpConfigPath: URL?
     public var agentsJSON: String?
     public var maxBudgetUSD: Double?
-    /// Token-level streaming. High frame volume; togglable per session (README, Runtime).
+    /// Token-level streaming. High frame volume; togglable per session (docs/RUNTIME.md).
     public var includePartialMessages: Bool
     /// Replaces the child's environment wholesale. Usually leave `nil` and use
     /// `additionalEnvironment` instead.
@@ -94,6 +98,23 @@ public struct SessionConfiguration: Sendable {
         }
     }
 
+    /// Where a file the operator handed the session lives, when it is not in the project.
+    ///
+    /// A dragged screenshot is the case that matters. It arrives in a sandbox-scoped drop directory
+    /// the agent's process cannot read at all, so `AttachmentStore` copies it somewhere it can —
+    /// and that somewhere has to be on `--add-dir`, or the agent has to ask permission for a file
+    /// the operator just gave it, which in a session with no one watching is a refusal.
+    ///
+    /// The temporary directory is here as well for the images the CLI itself writes when one is
+    /// pasted. Both are resolved through symlinks: `$TMPDIR` sits under `/var`, which links to
+    /// `/private/var`, and an unresolved prefix would not match the path the agent is asked for.
+    public static var attachmentDirectories: [URL] {
+        [
+            AttachmentStore.defaultDirectory,
+            FileManager.default.temporaryDirectory
+        ].map { $0.resolvingSymlinksInPath() }
+    }
+
     /// Destructive patterns unreachable regardless of broker state. Deliberately conservative —
     /// this is a backstop, not the policy engine.
     public static let defaultDenylist = [
@@ -112,6 +133,7 @@ public struct SessionConfiguration: Sendable {
         model: String? = nil,
         tools: [String]? = nil,
         disallowedTools: [String] = SessionConfiguration.defaultDenylist,
+        additionalDirectories: [URL] = SessionConfiguration.attachmentDirectories,
         settingsPath: URL? = nil,
         mcpConfigPath: URL? = nil,
         agentsJSON: String? = nil,
@@ -133,6 +155,7 @@ public struct SessionConfiguration: Sendable {
         self.model = model
         self.tools = tools
         self.disallowedTools = disallowedTools
+        self.additionalDirectories = additionalDirectories
         self.settingsPath = settingsPath
         self.mcpConfigPath = mcpConfigPath
         self.agentsJSON = agentsJSON
@@ -184,6 +207,8 @@ public struct SessionConfiguration: Sendable {
 
         if let tools { Self.appendVariadic("--tools", values: tools, to: &args) }
         Self.appendVariadic("--disallowedTools", values: disallowedTools, to: &args)
+        Self.appendVariadic(
+            "--add-dir", values: additionalDirectories.map(\.path), to: &args)
 
         args += additionalArguments
         return args

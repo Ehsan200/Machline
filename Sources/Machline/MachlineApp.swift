@@ -134,6 +134,20 @@ struct SessionTabCommands: View {
 
         Divider()
 
+        Button(window?.isSessionRailVisible == false ? "Show Session Rail" : "Hide Session Rail") {
+            window?.toggleSessionRail()
+        }
+        .keyboardShortcut("[", modifiers: [.command, .option])
+        .disabled(window?.workspace == nil)
+
+        Button(window?.isRunPanelVisible == false ? "Show Run Panel" : "Hide Run Panel") {
+            window?.toggleRunPanel()
+        }
+        .keyboardShortcut("]", modifiers: [.command, .option])
+        .disabled(window?.workspace == nil)
+
+        Divider()
+
         Button("Toggle Shell") { window?.current.toggleTerminal() }
             // Control-backtick, the shortcut every editor uses for its terminal drawer.
             .keyboardShortcut("`", modifiers: .control)

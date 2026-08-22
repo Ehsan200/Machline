@@ -55,10 +55,18 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 SectionLabel("Projects", trailing: "\(all.count)")
 
+                let shown = Array(all.prefix(Self.chipLimit))
+                let ambiguous = Self.ambiguousNames(in: shown)
+
                 ChipFlow(spacing: Theme.Space.sm) {
-                    ForEach(all.prefix(Self.chipLimit), id: \.self) { url in
+                    ForEach(shown, id: \.self) { url in
                         ProjectChip(
                             workspace: url,
+                            // Only where it earns its width: `IOP` says nothing when three
+                            // clients each have one, and everything once it is `IOP · Kavish`.
+                            detail: ambiguous.contains(url.lastPathComponent)
+                                ? url.deletingLastPathComponent().lastPathComponent
+                                : nil,
                             onOpen: { model.open(workspace: url) },
                             onOpenInNewWindow: {
                                 openWindow(
@@ -75,6 +83,13 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    /// Leaf names carried by more than one of these projects.
+    static func ambiguousNames(in workspaces: [URL]) -> Set<String> {
+        var counts: [String: Int] = [:]
+        for url in workspaces { counts[url.lastPathComponent, default: 0] += 1 }
+        return Set(counts.filter { $0.value > 1 }.keys)
     }
 
     // MARK: - Header
@@ -248,12 +263,15 @@ struct HomeView: View {
 /// One project, small enough to sit beside a dozen others.
 private struct ProjectChip: View {
     let workspace: URL
+    /// The parent's name, when the project's own name is shared with another chip.
+    var detail: String?
     let onOpen: () -> Void
     let onOpenInNewWindow: () -> Void
 
     var body: some View {
         Pill(
             title: workspace.lastPathComponent,
+            detail: detail,
             systemImage: "folder",
             help: "\(workspace.path) — ⌘-click opens a new window"
         ) {

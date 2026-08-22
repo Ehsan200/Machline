@@ -48,9 +48,31 @@ struct MessageSegment: Identifiable {
         /\[Image: source: ([^\]]+)\]/
     }
 
+    /// An image the operator named themselves, rather than one the CLI attached.
+    ///
+    /// Dragging a screenshot into the composer inserts `@/absolute/path.png`, which the CLI reads
+    /// but never rewrites into an `[Image: source:]` line — so the turn showed a path where the
+    /// picture should be. The mention is replaced by the picture, not annotated with it: a path and
+    /// its own contents side by side is the same attachment said twice, and the long one is the
+    /// half nobody reads.
+    ///
+    /// Deliberately narrow. Absolute paths only, ending in a known image extension at a word
+    /// boundary — a screenshot name carries spaces (`Screenshot 2026-08-22 at 9.45.42 PM.png`), so
+    /// the path cannot simply run to the next space, and the extension is what ends it instead.
+    private static var mentionedImage: Regex<(Substring, Substring)> {
+        /@?(\/[^\n]*?\.(?i:png|jpe?g|gif|webp|heic|heif|bmp|tiff?))(?=[\s,;)\]]|$)/
+    }
+
+    /// One image reference found in the text, and the span it occupies.
+    private struct Reference {
+        let range: Range<String.Index>
+        let path: String
+    }
+
     static func parse(_ text: String) -> [MessageSegment] {
         var segments: [MessageSegment] = []
         var cursor = text.startIndex
+        var seen: Set<String> = []
 
         func appendProse(_ range: Range<String.Index>) {
             let body = text[range].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,11 +80,13 @@ struct MessageSegment: Identifiable {
             segments.append(.init(id: segments.count, content: .prose(body)))
         }
 
-        for match in text.matches(of: reference) {
-            appendProse(cursor..<match.range.lowerBound)
-            let path = String(match.output.1).trimmingCharacters(in: .whitespaces)
-            segments.append(.init(id: segments.count, content: .image(URL(fileURLWithPath: path))))
-            cursor = match.range.upperBound
+        for reference in references(in: text) {
+            guard seen.insert(reference.path).inserted else { continue }
+            appendProse(cursor..<reference.range.lowerBound)
+            segments.append(.init(
+                id: segments.count,
+                content: .image(URL(fileURLWithPath: reference.path))))
+            cursor = reference.range.upperBound
         }
         appendProse(cursor..<text.endIndex)
 
@@ -72,6 +96,34 @@ struct MessageSegment: Identifiable {
             segments.append(.init(id: 0, content: .prose(text)))
         }
         return segments
+    }
+
+    /// Every image reference in the text, in the order it appears.
+    ///
+    /// A bare path inside an `[Image: source: …]` marker matches both patterns, so the markers win
+    /// any overlap: they are the CLI's own rendering, and the whole marker is what has to go rather
+    /// than the path within it.
+    private static func references(in text: String) -> [Reference] {
+        var found = text.matches(of: reference).map {
+            Reference(
+                range: $0.range,
+                path: String($0.output.1).trimmingCharacters(in: .whitespaces))
+        }
+
+        for match in text.matches(of: mentionedImage) {
+            guard !found.contains(where: { $0.range.overlaps(match.range) }) else { continue }
+            let path = String(match.output.1).trimmingCharacters(in: .whitespaces)
+            // An attachment the CLI recorded really was sent, so a marker with nothing behind it
+            // still earns the missing-image notice. A path the operator merely typed is prose that
+            // happens to end in `.png` — claiming an image went missing there would be an
+            // invention, so it is left as the prose it is.
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            found.append(Reference(range: match.range, path: path))
+        }
+
+        return found
+            .filter { !$0.path.isEmpty }
+            .sorted { $0.range.lowerBound < $1.range.lowerBound }
     }
 }
 

@@ -46,7 +46,7 @@ struct CommitTests {
 
     // MARK: - Advisories
 
-    /// Advisory only: a long subject produces a warning, never a blocked commit (README, Runtime).
+    /// Advisory only: a long subject produces a warning, never a blocked commit (docs/RUNTIME.md).
     @Test("Style guidance is reported without blocking anything")
     func advisories() {
         let long = ConventionalCommit(

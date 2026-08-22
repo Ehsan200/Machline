@@ -8,7 +8,7 @@ import Testing
 ///
 ///     HARNESS_LIVE_TESTS=1 swift test
 ///
-/// They are the canary for upstream frame-schema drift (README, Runtime). Run them before moving the
+/// They are the canary for upstream frame-schema drift (docs/RUNTIME.md). Run them before moving the
 /// version pin; the fixture-based suites cover everything else.
 @Suite("Live supervisor", .enabled(if: ProcessInfo.processInfo.environment["HARNESS_LIVE_TESTS"] == "1"))
 struct LiveSupervisorTests {
@@ -66,7 +66,7 @@ struct LiveSupervisorTests {
         }
     }
 
-    /// Confirms the steering semantics the UI depends on (README, Runtime): a message injected while a
+    /// Confirms the steering semantics the UI depends on (docs/RUNTIME.md): a message injected while a
     /// tool call is in flight is *queued*, and the `--replay-user-messages` echo marks the moment it
     /// is actually consumed — which is after the tool returns, not when it was sent.
     @Test("A steer injected mid-tool-call is consumed at the next turn boundary", .timeLimit(.minutes(3)))

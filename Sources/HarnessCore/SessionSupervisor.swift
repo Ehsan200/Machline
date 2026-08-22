@@ -9,7 +9,7 @@ public enum SupervisorEvent: Sendable {
     /// child is complaining, and it is kept off the frame stream so stdout stays pure JSONL.
     case standardError(String)
     /// A turn ended. **Not** the end of the session — the process stays alive awaiting input, and a
-    /// single run can emit several of these (README, Runtime, verified).
+    /// single run can emit several of these (docs/RUNTIME.md, verified).
     case turnCompleted(TurnResult)
     /// The child exited. This, and only this, is session teardown.
     case exited(status: Int32, reason: Process.TerminationReason)
@@ -125,7 +125,7 @@ public actor SessionSupervisor {
     /// Injects a user message — the initial prompt, or a mid-run steer.
     ///
     /// Delivery is **queued to the next turn boundary**, not immediate: a steer written while a
-    /// tool call is in flight is consumed only once that call returns (README, Runtime, verified at
+    /// tool call is in flight is consumed only once that call returns (docs/RUNTIME.md, verified at
     /// 4.0 s sent / 17.7 s consumed across a 12-second tool call). Callers should treat the message
     /// as pending until the `--replay-user-messages` echo arrives on the frame stream, and must not
     /// use this as a way to stop a running tool — that is `interrupt()`.

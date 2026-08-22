@@ -18,9 +18,31 @@ final class WindowModel {
     private(set) var tabs: [AppModel] = []
     private(set) var selection = 0
 
+    /// Whether the session rail is showing. Chrome belongs to the window, not to a tab: hiding a
+    /// rail and having it come back on the next tab would be a setting that does not hold.
+    var isSessionRailVisible = true {
+        didSet { UserDefaults.standard.set(isSessionRailVisible, forKey: Self.sessionRailKey) }
+    }
+
+    /// Whether the run panel is showing.
+    var isRunPanelVisible = true {
+        didSet { UserDefaults.standard.set(isRunPanelVisible, forKey: Self.runPanelKey) }
+    }
+
+    private static let sessionRailKey = "isSessionRailVisible"
+    private static let runPanelKey = "isRunPanelVisible"
+
     init() {
         tabs = [AppModel()]
+        // Absent means never hidden, which is the default either way — `bool(forKey:)` would
+        // report `false` for a first run and open every window with both rails collapsed.
+        let defaults = UserDefaults.standard
+        isSessionRailVisible = defaults.object(forKey: Self.sessionRailKey) as? Bool ?? true
+        isRunPanelVisible = defaults.object(forKey: Self.runPanelKey) as? Bool ?? true
     }
+
+    func toggleSessionRail() { isSessionRailVisible.toggle() }
+    func toggleRunPanel() { isRunPanelVisible.toggle() }
 
     /// The session in front, or `nil` only during the instant `close` holds no tabs.
     ///

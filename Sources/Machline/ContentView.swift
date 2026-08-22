@@ -43,23 +43,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Theme.Colors.canvas)
                 } else {
-                HSplitView {
-                    SessionRailView(model: model, window: window)
-                        .frame(
-                            minWidth: Theme.Layout.railMinWidth,
-                            idealWidth: Theme.Layout.railWidth,
-                            maxWidth: Theme.Layout.railMaxWidth)
-
-                    CenterStageView(model: model)
-                        .frame(minWidth: Theme.Layout.centerMinWidth)
-                        .layoutPriority(1)
-
-                    RunPanelView(model: model)
-                        .frame(
-                            minWidth: Theme.Layout.runPanelMinWidth,
-                            idealWidth: Theme.Layout.runPanelWidth,
-                            maxWidth: Theme.Layout.runPanelMaxWidth)
-                }
+                    workspacePanes
                 }
             }
         }
@@ -97,6 +81,33 @@ struct ContentView: View {
             set: { model.reportCommand = $0 })
         ) { command in
             StatusSheet(model: model, command: command)
+        }
+    }
+
+    /// The three-pane workspace. Either rail can be put away, the way an editor puts its sidebars
+    /// away; the `HSplitView` is rebuilt without it, which is what lets the centre take the width
+    /// back — a pane squeezed to zero width would leave its divider behind.
+    private var workspacePanes: some View {
+        HSplitView {
+            if window.isSessionRailVisible {
+                SessionRailView(model: model, window: window)
+                    .frame(
+                        minWidth: Theme.Layout.railMinWidth,
+                        idealWidth: Theme.Layout.railWidth,
+                        maxWidth: Theme.Layout.railMaxWidth)
+            }
+
+            CenterStageView(model: model)
+                .frame(minWidth: Theme.Layout.centerMinWidth)
+                .layoutPriority(1)
+
+            if window.isRunPanelVisible {
+                RunPanelView(model: model, window: window)
+                    .frame(
+                        minWidth: Theme.Layout.runPanelMinWidth,
+                        idealWidth: Theme.Layout.runPanelWidth,
+                        maxWidth: Theme.Layout.runPanelMaxWidth)
+            }
         }
     }
 

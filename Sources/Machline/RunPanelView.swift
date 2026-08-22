@@ -8,6 +8,8 @@ import SwiftUI
 /// state, and repeating it here costs the vertical space that subagents and changed files need.
 struct RunPanelView: View {
     @Bindable var model: AppModel
+    /// Only for the control that puts this rail away — the panel's own contents are the session's.
+    @Bindable var window: WindowModel
 
     @State private var isUsageExpanded = false
     @State private var isApprovalsExpanded = false
@@ -28,6 +30,18 @@ struct RunPanelView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 0) {
+                    // Outside the scroll would be a header, which this rail deliberately does not
+                    // have. One right-aligned control costs a row of nothing instead.
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        IconButton(
+                            systemName: "sidebar.trailing", help: "Hide the run panel (⌘⌥])"
+                        ) {
+                            window.toggleRunPanel()
+                        }
+                    }
+                    .padding(.trailing, Theme.Space.xs)
+
                     // What is happening now, at the top.
                     ContextSummary(model: model, isExpanded: $isUsageExpanded)
 

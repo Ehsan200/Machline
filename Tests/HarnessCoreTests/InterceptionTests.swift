@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import HarnessCore
 
-/// Regression guards for the interception findings in README, Runtime These encode *observed runtime
+/// Regression guards for the interception findings in docs/RUNTIME.md These encode *observed runtime
 /// behaviour*, including behaviour we consider unsafe — if a CLI upgrade changes any of them, these
 /// tests fail and the security design must be revisited before the version pin moves.
 @Suite("Command interception behaviour")

@@ -9,6 +9,8 @@ import SwiftUI
 /// A capsule-shaped button: a project chip, a jump-to-latest affordance, a filter tag.
 struct Pill: View {
     let title: String
+    /// A qualifier shown after the title, for when the title alone is ambiguous.
+    var detail: String?
     var systemImage: String?
     /// Filled in the accent colour rather than the panel colour, for a pill that is an action
     /// rather than a choice among many.
@@ -30,6 +32,12 @@ struct Pill: View {
                     .font(isProminent ? Theme.Typography.meta : Theme.Typography.control)
                     .foregroundStyle(isProminent ? Theme.Colors.textStrong : Theme.Colors.text)
                     .lineLimit(1)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(Theme.Typography.monoMeta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                        .lineLimit(1)
+                }
             }
             .padding(.horizontal, Theme.Space.md)
             .padding(.vertical, Theme.Space.xs + 1)

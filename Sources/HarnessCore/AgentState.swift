@@ -3,7 +3,7 @@ import Foundation
 /// Where an agent is in its lifecycle.
 ///
 /// Every transition is driven by a control-plane frame or an `ApprovalBroker` event — never
-/// inferred from message text (README, Runtime).
+/// inferred from message text (docs/RUNTIME.md).
 public enum AgentState: Sendable, Equatable {
     case idle
     case thinking
@@ -49,7 +49,7 @@ public enum TranscriptEntry: Sendable, Equatable, Identifiable {
     case text(id: UUID, messageID: String, text: String)
     case toolCall(id: UUID, use: ToolUse)
     case toolResult(id: UUID, result: ToolResult, output: ProcessOutput?)
-    /// A steer written to stdin but not yet consumed by the agent (README, Runtime).
+    /// A steer written to stdin but not yet consumed by the agent (docs/RUNTIME.md).
     case steerQueued(id: UUID, text: String)
     /// The same steer, once the `--replay-user-messages` echo confirmed consumption.
     case steerDelivered(id: UUID, text: String)
@@ -66,7 +66,7 @@ public enum TranscriptEntry: Sendable, Equatable, Identifiable {
         }
     }
 
-    /// Assistant frames arrive one per content block, all sharing a message id (README, Runtime). The UI
+    /// Assistant frames arrive one per content block, all sharing a message id (docs/RUNTIME.md). The UI
     /// groups on this so a single reply renders as one bubble.
     public var messageID: String? {
         switch self {
@@ -117,7 +117,7 @@ public struct AgentNode: Sendable, Equatable, Identifiable {
     public var transcript: [TranscriptEntry] = []
     public var telemetry = AgentTelemetry()
     /// Capability snapshot from the most recent `system/init`. Re-emitted mid-session when the tool
-    /// set changes, so this is replaced rather than merged (README, Runtime).
+    /// set changes, so this is replaced rather than merged (docs/RUNTIME.md).
     public var capabilities: SessionInit?
     /// Set when a `PreToolUse` hook was cancelled by the runtime, meaning a command ran unapproved
     /// (Finding 1). This is an incident, not a warning.

@@ -11,6 +11,20 @@ struct SessionTabStrip: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            // The way back for a rail that has been put away: the button on the rail itself goes
+            // with it, so the pair that restores them lives here, where the chrome always is.
+            IconButton(
+                systemName: window.isSessionRailVisible ? "sidebar.leading" : "sidebar.left",
+                help: window.isSessionRailVisible
+                    ? "Hide the session rail (⌘⌥[)"
+                    : "Show the session rail (⌘⌥[)",
+                tint: window.isSessionRailVisible ? Theme.Colors.muted : Theme.Colors.subtle
+            ) {
+                window.toggleSessionRail()
+            }
+            .padding(.leading, Theme.Space.xs)
+            .disabled(model.workspace == nil)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
                     ForEach(Array(window.tabs.enumerated()), id: \.element.id) { index, model in
@@ -40,7 +54,18 @@ struct SessionTabStrip: View {
             Spacer(minLength: Theme.Space.sm)
 
             versionBadge
-                .padding(.trailing, Theme.Space.md)
+
+            IconButton(
+                systemName: window.isRunPanelVisible ? "sidebar.trailing" : "sidebar.right",
+                help: window.isRunPanelVisible
+                    ? "Hide the run panel (⌘⌥])"
+                    : "Show the run panel (⌘⌥])",
+                tint: window.isRunPanelVisible ? Theme.Colors.muted : Theme.Colors.subtle
+            ) {
+                window.toggleRunPanel()
+            }
+            .padding(.horizontal, Theme.Space.xs)
+            .disabled(model.workspace == nil)
         }
         .frame(height: 34)
         .background(Theme.Colors.canvas)

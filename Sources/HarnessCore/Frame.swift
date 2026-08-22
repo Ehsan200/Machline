@@ -93,7 +93,7 @@ public struct Frame: Sendable, Hashable {
 
 extension Frame {
     /// True for frames that arrive at very high frequency and must be coalesced before they reach
-    /// the UI (README, Runtime). A trivial two-turn probe emitted 18 thinking-token and 32 stream-event
+    /// the UI (docs/RUNTIME.md). A trivial two-turn probe emitted 18 thinking-token and 32 stream-event
     /// frames.
     public var isHighFrequency: Bool {
         switch kind {

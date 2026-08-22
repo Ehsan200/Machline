@@ -166,7 +166,7 @@ public struct AgentGraph: Sendable {
     // MARK: - Steering
 
     /// Records a steer written to stdin. It is *queued*, not delivered — the agent consumes it at
-    /// the next turn boundary (README, Runtime), which arrives as a replayed user message.
+    /// the next turn boundary (docs/RUNTIME.md), which arrives as a replayed user message.
     @discardableResult
     public mutating func noteSteerQueued(text: String, agentID: String? = nil) -> [GraphChange] {
         var changes: [GraphChange] = []
@@ -354,7 +354,7 @@ public struct AgentGraph: Sendable {
 
         append(.turnEnded(id: idGenerator(), result: turnResult), to: ownerID, changes: &changes)
 
-        // A `result` frame is a turn boundary, not the end of the session (README, Runtime): the agent
+        // A `result` frame is a turn boundary, not the end of the session (docs/RUNTIME.md): the agent
         // goes idle and stays available for the next message.
         if turnResult.isError {
             transition(ownerID, to: .errored(turnResult.text ?? "Turn failed"), changes: &changes)

@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Like `RiskClassifier`, this is a **labelling aid, not a security boundary** — it reads names and
 /// descriptions, which a server author controls. It decides which tools get flagged for mandatory
-/// confirmation in the UI (README, Runtime); it never decides what runs.
+/// confirmation in the UI (docs/RUNTIME.md); it never decides what runs.
 public enum MCPToolCapability: String, Sendable, Codable, CaseIterable {
     case read
     case write
@@ -52,7 +52,7 @@ public enum MCPToolCapability: String, Sendable, Codable, CaseIterable {
 /// Which tools each agent may use.
 ///
 /// MCP tools are **denied by default** by the runtime — a session with a connected server still
-/// cannot call its tools until they are named in `--allowedTools` (verified; see README, Runtime). That
+/// cannot call its tools until they are named in `--allowedTools` (verified; see docs/RUNTIME.md). That
 /// makes this type the grant mechanism rather than a restriction mechanism: an empty policy is a
 /// closed one.
 public struct MCPToolPolicy: Sendable, Codable {

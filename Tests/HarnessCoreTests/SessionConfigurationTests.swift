@@ -24,7 +24,7 @@ struct SessionConfigurationTests {
         #expect(arguments().contains("--verbose"))
     }
 
-    /// Guards README, Runtime Finding 4: `--setting-sources ""` does not isolate MCP servers, so the
+    /// Guards docs/RUNTIME.md Finding 4: `--setting-sources ""` does not isolate MCP servers, so the
     /// strict flag is not a companion to `--mcp-config`.
     @Test("Sealed mode passes --strict-mcp-config regardless of an MCP config file")
     func strictMCPConfigUnconditionalWhenSealed() {
@@ -69,7 +69,7 @@ struct SessionConfigurationTests {
         #expect(configuration.isolation == .sealed)
     }
 
-    /// The crash-proof backstop from README, Runtime Finding 3 — the only enforcement that survives the
+    /// The crash-proof backstop from docs/RUNTIME.md Finding 3 — the only enforcement that survives the
     /// app dying, so it must never default to empty.
     @Test("A static denylist is passed by default")
     func denylistByDefault() {
@@ -216,5 +216,109 @@ struct SessionBillingTests {
         configuration.additionalEnvironment = ["HARNESS_SOCKET": "/tmp/sock"]
         let resolved = configuration.resolvedEnvironment(inheriting: ["HARNESS_SOCKET": "stale"])
         #expect(resolved["HARNESS_SOCKET"] == "/tmp/sock")
+    }
+
+    /// A dropped screenshot is copied into the attachment store, so a session that cannot read
+    /// that directory answers a file the operator just handed it with a permission error.
+    @Test("The attachment store is on --add-dir by default")
+    func attachmentDirectoryGranted() {
+        let args = SessionConfiguration(
+            workingDirectory: URL(fileURLWithPath: "/tmp")).arguments()
+        guard let index = args.firstIndex(of: "--add-dir") else {
+            Issue.record("--add-dir was not passed")
+            return
+        }
+        let granted = args[(index + 1)...].prefix { !$0.hasPrefix("--") }
+        #expect(granted.contains(AttachmentStore.defaultDirectory.resolvingSymlinksInPath().path))
+    }
+
+    /// `--add-dir` is variadic, so a bare one would eat whatever flag came next — the same fault
+    /// `appendVariadic` exists to prevent for `--tools`.
+    @Test("No directories means no --add-dir at all")
+    func noAddDirWhenEmpty() {
+        var configuration = SessionConfiguration(workingDirectory: URL(fileURLWithPath: "/tmp"))
+        configuration.additionalDirectories = []
+        #expect(!configuration.arguments().contains("--add-dir"))
+    }
+}
+
+@Suite("Attachment store")
+struct AttachmentStoreTests {
+
+    private func temporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("attachment-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// The drop directory macOS hands a dragged screenshot over in.
+    @Test("A file in the per-user temporary tree is out of the agent's reach")
+    func temporaryFilesNeedCopying() {
+        let dropped = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TemporaryItems/NSIRD_screencaptureui_ABC/Screenshot.png")
+        #expect(AttachmentStore.isUnreachableByAgent(dropped))
+        #expect(!AttachmentStore.isUnreachableByAgent(URL(fileURLWithPath: "/Users/x/project/a.png")))
+    }
+
+    @Test("Adopting copies the file and leaves the original alone")
+    func adoptCopies() throws {
+        let source = try temporaryDirectory()
+        let store = AttachmentStore(directory: try temporaryDirectory())
+        let original = source.appendingPathComponent("Screenshot 1.png")
+        try Data("bytes".utf8).write(to: original)
+
+        let adopted = try store.adopt(original)
+        #expect(FileManager.default.fileExists(atPath: original.path))
+        #expect(try Data(contentsOf: adopted) == Data("bytes".utf8))
+    }
+
+    /// The copied path is written into a prompt as an `@mention`, and a space there ends the
+    /// mention early — so the agent would be handed `@/…/Screenshot` and nothing after it.
+    @Test("Whitespace is folded out of the copied name")
+    func nameIsMentionable() throws {
+        #expect(
+            AttachmentStore.mentionable("Screenshot 2026-08-22 at 9.45.42 PM.png")
+                == "Screenshot-2026-08-22-at-9.45.42-PM.png")
+
+        let store = AttachmentStore(directory: try temporaryDirectory())
+        let source = try temporaryDirectory().appendingPathComponent("a b.png")
+        try Data().write(to: source)
+        #expect(try store.adopt(source).lastPathComponent == "a-b.png")
+    }
+
+    @Test("Two files of the same name do not collide")
+    func adoptionsAreDistinct() throws {
+        let store = AttachmentStore(directory: try temporaryDirectory())
+        let first = try temporaryDirectory().appendingPathComponent("shot.png")
+        let second = try temporaryDirectory().appendingPathComponent("shot.png")
+        try Data("one".utf8).write(to: first)
+        try Data("two".utf8).write(to: second)
+
+        let a = try store.adopt(first)
+        let b = try store.adopt(second)
+        #expect(a != b)
+        #expect(try Data(contentsOf: a) == Data("one".utf8))
+        #expect(try Data(contentsOf: b) == Data("two".utf8))
+    }
+
+    @Test("Pruning drops what is past its age and keeps the rest")
+    func pruneByAge() throws {
+        let store = AttachmentStore(directory: try temporaryDirectory())
+        let recent = try store.adopt(try makeFile(named: "recent.png"))
+        let old = try store.adopt(try makeFile(named: "old.png"))
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 0)],
+            ofItemAtPath: old.deletingLastPathComponent().path)
+
+        store.prune(olderThan: 60)
+        #expect(FileManager.default.fileExists(atPath: recent.path))
+        #expect(!FileManager.default.fileExists(atPath: old.path))
+    }
+
+    private func makeFile(named name: String) throws -> URL {
+        let url = try temporaryDirectory().appendingPathComponent(name)
+        try Data("x".utf8).write(to: url)
+        return url
     }
 }

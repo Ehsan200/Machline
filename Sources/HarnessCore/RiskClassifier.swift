@@ -5,7 +5,7 @@ import Foundation
 /// **This is not a security boundary.** It colours the sheet and picks a default button; it is
 /// trivially evaded by obfuscation, indirection, or anything it has no pattern for. Real
 /// containment is the operator's decision, the static `--disallowedTools` denylist, and the
-/// optional sandbox profile (README, Runtime). Never gate execution on this alone.
+/// optional sandbox profile (docs/RUNTIME.md). Never gate execution on this alone.
 public struct RiskClassifier: Sendable {
 
     public enum Level: Int, Sendable, Comparable, Codable {

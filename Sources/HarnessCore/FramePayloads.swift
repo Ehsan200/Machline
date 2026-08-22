@@ -46,7 +46,7 @@ public struct ToolUse: Sendable, Hashable {
     public let id: String
     public let name: String
     public let input: JSONValue
-    /// The `caller` discriminator on the block. Only `"direct"` has been observed (README, Runtime).
+    /// The `caller` discriminator on the block. Only `"direct"` has been observed (docs/RUNTIME.md).
     public let callerType: String?
 
     init(raw: JSONValue) {
@@ -56,7 +56,7 @@ public struct ToolUse: Sendable, Hashable {
         callerType = raw.value(at: "caller", "type")?.stringValue
     }
 
-    /// The `Task` tool is enabled under that name but emits blocks named `Agent` (README, Runtime).
+    /// The `Task` tool is enabled under that name but emits blocks named `Agent` (docs/RUNTIME.md).
     /// Match on both so subagent launches are never missed.
     public var isSubagentLaunch: Bool {
         name == "Agent" || name == "Task"
@@ -94,7 +94,7 @@ public struct ToolResult: Sendable, Hashable {
 
 public struct AssistantMessage: Sendable, Hashable {
     /// Frames are emitted one per completed content block, all sharing this id. Group on it —
-    /// do not render one bubble per frame (README, Runtime).
+    /// do not render one bubble per frame (docs/RUNTIME.md).
     public let id: String
     public let model: String?
     public let content: [ContentBlock]
@@ -115,7 +115,7 @@ public struct AssistantMessage: Sendable, Hashable {
 ///
 /// For `Bash` results this is an object with stdout and stderr already separated — no parsing of
 /// concatenated output is needed. For a hook denial it is a bare string. Both shapes are observed
-/// in the probes, which is why this is an enum rather than a struct (README, Runtime).
+/// in the probes, which is why this is an enum rather than a struct (docs/RUNTIME.md).
 public enum ToolUseResultSidecar: Sendable, Hashable {
     case process(ProcessOutput)
     case text(String)
@@ -180,7 +180,7 @@ public struct SessionInit: Sendable, Hashable {
     public let apiKeySource: String?
     public let outputStyle: String?
     /// The tool set actually negotiated, which may differ from what was requested. Populate the
-    /// tool drawer from this, not from our own launch arguments (README, Runtime).
+    /// tool drawer from this, not from our own launch arguments (docs/RUNTIME.md).
     public let tools: [String]
     public let mcpServers: [JSONValue]
     public let agents: [String]
@@ -327,7 +327,7 @@ public struct PermissionDenial: Sendable, Hashable {
     }
 }
 
-/// Marks the end of a **turn**, not the end of the session (README, Runtime).
+/// Marks the end of a **turn**, not the end of the session (docs/RUNTIME.md).
 public struct TurnResult: Sendable, Hashable {
     public let subtype: String
     public let isError: Bool

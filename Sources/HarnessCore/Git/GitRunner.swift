@@ -2,7 +2,7 @@ import Foundation
 
 /// Runs `git` as a subprocess.
 ///
-/// Deliberately the porcelain rather than libgit2 (README, Runtime): building libgit2 for ARM64 with a
+/// Deliberately the porcelain rather than libgit2 (docs/RUNTIME.md): building libgit2 for ARM64 with a
 /// maintained Swift binding is ongoing cost for no capability the CLI lacks, and running both paths
 /// would double the bug surface.
 public struct GitRunner: Sendable {

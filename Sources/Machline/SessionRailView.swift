@@ -223,6 +223,10 @@ struct SessionRailView: View {
             IconButton(systemName: "plus", help: "Open a project (⌘O)") {
                 openProject()
             }
+
+            IconButton(systemName: "sidebar.leading", help: "Hide the session rail (⌘⌥[)") {
+                window.toggleSessionRail()
+            }
         }
         .padding(.horizontal, Theme.Space.md)
         .frame(height: Theme.Layout.utilityRowHeight)

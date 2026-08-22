@@ -63,7 +63,7 @@ public struct ConventionalCommit: Sendable, Hashable, Codable {
 
     // MARK: - Advisories
 
-    /// Style guidance shown next to the composer. **Advisory, never enforced** (README, Runtime) — a long
+    /// Style guidance shown next to the composer. **Advisory, never enforced** (docs/RUNTIME.md) — a long
     /// subject is a nudge, not a blocked commit.
     public struct Advisory: Sendable, Hashable, Identifiable {
         public enum Kind: String, Sendable { case subjectTooLong, bodyLineTooLong, emptySummary,
@@ -163,7 +163,7 @@ public struct ConventionalCommit: Sendable, Hashable, Codable {
 
 /// Generates a commit-message draft from the staged diff.
 ///
-/// Reuses the agent runtime rather than adding a second LLM path (README, Runtime): a short-lived
+/// Reuses the agent runtime rather than adding a second LLM path (docs/RUNTIME.md): a short-lived
 /// `claude -p` invocation with `--json-schema`, so the result is a validated object rather than
 /// prose to be scraped. The draft is always a suggestion — the operator edits it and triggers the
 /// commit themselves.
@@ -274,9 +274,21 @@ public struct CommitDraftGenerator: Sendable {
         }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        // Resolved and given the login shell's environment, exactly as a session is.
+        //
+        // This used to be `/usr/bin/env claude` on the app's own environment. Launched from Finder
+        // that is `launchd`'s, whose `PATH` is `/usr/bin:/bin:/usr/sbin:/sbin` — so a Homebrew or
+        // npm `claude` was invisible, `env` exited 127, and Suggest span and then did nothing.
+        do {
+            process.executableURL = try SessionSupervisor.resolve(executable: executable)
+        } catch {
+            throw Failure.generationFailed(
+                "Could not find `\(executable)` on the path. \(String(describing: error))")
+        }
+        process.environment = SessionSupervisor.inheritedEnvironment()
+
         var arguments = [
-            executable, "-p",
+            "-p",
             "--output-format", "json",
             "--json-schema", Self.schema,
             // A drafting call has no business reading the operator's settings or touching tools.
@@ -348,6 +360,11 @@ public struct CommitDraftGenerator: Sendable {
     }
 
     /// A directory for the drafting run to be recorded against.
+    ///
+    /// The path is resolved through symlinks before it is handed to the CLI. On macOS the
+    /// temporary directory sits under `/var`, which is a link to `/private/var`: the CLI files the
+    /// transcript under the resolved path, so a scratch directory named by the unresolved one is
+    /// filed somewhere `discardTranscript` never looks and the run is left behind as a project.
     static func makeScratchDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("machline-commit-draft-\(UUID().uuidString)")
@@ -356,7 +373,7 @@ public struct CommitDraftGenerator: Sendable {
         } catch {
             throw Failure.generationFailed("Could not create a scratch directory: \(error)")
         }
-        return url
+        return url.resolvingSymlinksInPath()
     }
 
     /// Removes everything the drafting run left behind.
@@ -377,6 +394,21 @@ public struct CommitDraftGenerator: Sendable {
                 .appendingPathComponent(SessionHistory.directoryName(for: scratch))
                 .appendingPathComponent("\(sessionID.uuidString.lowercased()).jsonl"))
         try? manager.removeItem(at: scratch)
+        discardOrphanedScratchProjects(store: store)
+    }
+
+    /// Removes scratch projects earlier runs left behind.
+    ///
+    /// A scratch directory belongs to exactly one drafting run, so any project directory named
+    /// after one is finished by definition — including those filed under a path the mangling used
+    /// to miss. Without this they accumulate in the session list as one project per draft.
+    static func discardOrphanedScratchProjects(store: SessionHistory = SessionHistory()) {
+        let manager = FileManager.default
+        guard let entries = try? manager.contentsOfDirectory(
+            at: store.root, includingPropertiesForKeys: nil) else { return }
+        for entry in entries where entry.lastPathComponent.contains("machline-commit-draft-") {
+            try? manager.removeItem(at: entry)
+        }
     }
 
     /// Extracts the structured draft from a `--output-format json` envelope.

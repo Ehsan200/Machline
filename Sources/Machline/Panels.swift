@@ -391,6 +391,22 @@ struct GitWorkbenchView: View {
                     : "Write a Conventional Commits message from the staged diff")
             }
 
+            if let draftError = git.draftError {
+                HStack(alignment: .top, spacing: Theme.Space.xs) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.Colors.error)
+                    Text(draftError)
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(Theme.Colors.error)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 0)
+                    IconButton(systemName: "xmark", help: "Dismiss") { git.dismissDraftError() }
+                }
+                .padding(.bottom, Theme.Space.xs)
+            }
+
             TextField("Summary", text: $git.commitDraft.summary, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...3)

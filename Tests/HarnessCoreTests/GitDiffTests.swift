@@ -93,7 +93,7 @@ struct GitDiffTests {
 
     // MARK: - Hunk staging
 
-    /// The acceptance criterion from README, Runtime: staging one hunk must produce exactly the index that
+    /// The acceptance criterion from docs/RUNTIME.md: staging one hunk must produce exactly the index that
     /// selecting that hunk in `git add -p` would.
     @Test("Staging a single hunk stages only that hunk")
     func stageOneHunk() throws {
