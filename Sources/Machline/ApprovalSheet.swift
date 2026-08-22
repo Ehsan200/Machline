@@ -134,6 +134,9 @@ struct ApprovalSheet: View {
             }
         }
         .padding(16)
+        // Only the details. The footer's prominent button takes its colour from the tint, and a
+        // selection wash is not the colour an Approve button should be.
+        .selectableTextTint()
     }
 
     private func labelled(

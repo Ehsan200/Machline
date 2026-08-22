@@ -413,6 +413,12 @@ final class GitPanelModel {
             do { try operation(manager) } catch { failure = String(describing: error) }
             await MainActor.run {
                 self.errorMessage = failure
+                // The summaries carry the ahead/behind counts, and Push is enabled from `ahead`.
+                // Committing moves that number, so a commit that did not re-read it left Push
+                // greyed out over commits that were sitting there ready to go — until a fetch,
+                // which is a *network* round trip, happened to refresh it as a side effect.
+                // `git status` knows the branch is ahead without asking the remote anything.
+                self.refreshSummaries()
                 self.refresh()
             }
         }

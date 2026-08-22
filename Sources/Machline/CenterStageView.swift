@@ -279,6 +279,7 @@ struct TimelineView: View {
                 scrollToBottom(proxy, animated: hasSettled)
             }
             .onAppear { scrollToBottom(proxy, animated: false) }
+            .selectableTextTint()
         }
     }
 

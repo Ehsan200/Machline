@@ -18,6 +18,13 @@ enum Theme {
         static let surface = Color(hex: 0x3C3836)
         static let hover = Color(hex: 0x504945)
         static let selection = Color(hex: 0x8EC07C, opacity: 0.20)
+        /// The wash behind selected text.
+        ///
+        /// macOS draws a text selection in the view's *tint*, and this interface tints everything
+        /// with a light green accent — light prose selected inside it came out light-on-light and
+        /// simply vanished while the drag was held. Dark enough that the text stays legible, green
+        /// enough to belong to the same palette.
+        static let textSelection = Color(hex: 0x45624A)
         static let border = Color(hex: 0x665C54)
         /// Dividers are quieter than borders; a full-strength rule reads as a box edge.
         static let divider = Color(hex: 0x3C3836)
@@ -350,5 +357,16 @@ struct Spinner: View {
                 value: isSpinning)
             .onAppear { isSpinning = true }
             .onDisappear { isSpinning = false }
+    }
+}
+
+extension View {
+    /// Tints text selection dark, for any view holding selectable prose.
+    ///
+    /// Applied to the regions that carry text rather than to the window: the accent tint is what
+    /// colours prominent buttons, so moving it globally would repaint every dialog's default
+    /// action to match a selection highlight.
+    func selectableTextTint() -> some View {
+        tint(Theme.Colors.textSelection)
     }
 }

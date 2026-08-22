@@ -79,6 +79,7 @@ struct RunPanelView: View {
             .scrollContentBackground(.hidden)
         }
         .background(Theme.Colors.panel)
+        .selectableTextTint()
         // `/context`, `/permissions`, and `/mcp` answer here rather than in a sheet: this is where
         // the controls are, so a read-only copy of the panel would be a dead end.
         // The hop off this turn is not cosmetic. An `onChange` handler runs *inside* the view

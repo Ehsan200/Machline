@@ -28,6 +28,7 @@ struct FileViewer: View {
         }
         .frame(width: 900, height: 660)
         .background(Theme.Colors.canvas)
+        .selectableTextTint()
         .onExitCommand { dismiss() }
         .task { await load() }
     }

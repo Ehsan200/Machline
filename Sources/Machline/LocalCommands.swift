@@ -462,6 +462,7 @@ struct StatusSheet: View {
         }
         .frame(width: 600, height: 480)
         .background(Theme.Colors.canvas)
+        .selectableTextTint()
         .onExitCommand { dismiss() }
     }
 

@@ -279,6 +279,46 @@ struct MarkdownRun: Identifiable {
     var id: Int { index }
 }
 
+/// Rendered prose, keyed by the blocks it came from.
+///
+/// Parsing the source into blocks was already cached; building the `AttributedString` from them
+/// was not, and that is the expensive half — a `Text(markdown:)` parse per line, plus paragraph
+/// styles and per-run attribute passes. SwiftUI rebuilds a body on any observable change, so a
+/// transcript of forty replies rebuilt forty attributed strings on every frame of a stream, and on
+/// every click that changed anything at all. That is the lag on interacting with a long output.
+///
+/// Keyed on the blocks themselves rather than on a digest: `MarkdownBlock` is `Hashable`, so this
+/// is a real equality check and cannot return the wrong text for a colliding key.
+@MainActor
+enum ProseCache {
+    private struct Key: Hashable {
+        let blocks: [MarkdownBlock]
+        let color: Color
+    }
+
+    /// Bounded, and evicted oldest-first. A long-running window otherwise accumulates every reply
+    /// it has ever rendered.
+    private static let limit = 400
+    private static var storage: [Key: AttributedString] = [:]
+    private static var insertionOrder: [Key] = []
+
+    static func attributed(
+        for blocks: [MarkdownBlock], color: Color, build: () -> AttributedString
+    ) -> AttributedString {
+        let key = Key(blocks: blocks, color: color)
+        if let hit = storage[key] { return hit }
+
+        let made = build()
+        storage[key] = made
+        insertionOrder.append(key)
+        if insertionOrder.count > limit {
+            let evicted = insertionOrder.removeFirst()
+            storage[evicted] = nil
+        }
+        return made
+    }
+}
+
 /// A run of prose as a single selectable `Text`.
 ///
 /// Structure survives as attributes and paragraph styles rather than as separate views, so a
@@ -289,12 +329,12 @@ struct MarkdownProse: View {
     let textColor: Color
 
     var body: some View {
-        Text(attributed)
+        Text(ProseCache.attributed(for: blocks, color: textColor) { build() })
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var attributed: AttributedString {
+    private func build() -> AttributedString {
         var output = AttributedString()
 
         for (index, block) in blocks.enumerated() {
