@@ -117,6 +117,29 @@ public enum UnixSocket {
             descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
     }
 
+    /// Runs a blocking socket call on a thread of its own.
+    ///
+    /// Reads and writes here park for as long as their deadline allows. Run on the cooperative
+    /// pool — which is where an actor's work lands — a few concurrent approvals hold every thread
+    /// the pool has, and the very tasks that would answer them never get scheduled. The pool is
+    /// sized to the core count, so a small machine needs only a few in flight to wedge.
+    public static func blocking<T: Sendable>(
+        _ work: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            let thread = Thread {
+                do {
+                    continuation.resume(returning: try work())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+            thread.name = "AgentHarness.UnixSocket.Blocking"
+            thread.stackSize = 1 << 20
+            thread.start()
+        }
+    }
+
     static func setReceiveTimeout(descriptor: Int32, seconds: TimeInterval) throws {
         var timeout = timeval(
             tv_sec: Int(seconds),
@@ -242,12 +265,35 @@ public enum UnixSocket {
         }
 
         /// Blocks until a client connects. Returns `nil` once the listener is closed.
+        ///
+        /// A failed `accept` is not the end of the listener. `EINTR` (any signal delivered to this
+        /// thread) and `ECONNABORTED` (a peer that gave up between the handshake and the accept)
+        /// are ordinary events on a busy machine, and returning `nil` for one of them ended the
+        /// caller's `while let` loop for good: the broker stayed bound to its socket, accepted
+        /// nothing ever again, and every approval after that denied on the helper's deadline.
         public func accept() -> Int32? {
-            let client = Darwin.accept(descriptor, nil, nil)
-            guard client >= 0 else { return nil }
-            // The peer on this one is a short-lived helper that may exit before we answer it.
-            UnixSocket.disableSIGPIPE(descriptor: client)
-            return client
+            while true {
+                let client = Darwin.accept(descriptor, nil, nil)
+                if client >= 0 {
+                    // The peer here is a short-lived helper that may exit before we answer it.
+                    UnixSocket.disableSIGPIPE(descriptor: client)
+                    return client
+                }
+                let code = errno
+                // Deliberate: a closed listener reports `EBADF`/`EINVAL`, which is not in this
+                // list and ends the loop. Only genuinely transient errors are retried.
+                let transient = [EINTR, ECONNABORTED, EAGAIN, EWOULDBLOCK, EMFILE, ENFILE]
+                guard transient.contains(code) else { return nil }
+                if isClosed { return nil }
+                // Descriptor exhaustion clears only once something else lets go, and a bare
+                // retry on it would spin a core. `EINTR` and `ECONNABORTED` retry immediately.
+                if code != EINTR && code != ECONNABORTED { usleep(20_000) }
+            }
+        }
+
+        private var isClosed: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return closed
         }
 
         public func close() {

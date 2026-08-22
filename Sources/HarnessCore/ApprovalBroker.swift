@@ -168,21 +168,24 @@ public actor ApprovalBroker {
 
         let request: ApprovalRequest
         do {
-            let line = try UnixSocket.readLine(
-                descriptor: descriptor,
-                deadline: Date().addingTimeInterval(Self.requestReadTimeout))
+            // Off the cooperative pool: this read waits on a helper that may take its time, and
+            // the pool thread it would otherwise hold is one the broker's own tasks need.
+            let readDeadline = Date().addingTimeInterval(Self.requestReadTimeout)
+            let line = try await UnixSocket.blocking {
+                try UnixSocket.readLine(descriptor: descriptor, deadline: readDeadline)
+            }
             request = try ApprovalRequest.decode(from: line)
         } catch {
             // We cannot identify what was being asked, so we certainly cannot allow it.
             let decision = ApprovalDecision.failClosed(
                 .malformedPayload, detail: "the approval request could not be read")
-            respond(descriptor: descriptor, decision: decision)
+            await respond(descriptor: descriptor, decision: decision)
             continuation?.yield(.failure("Unreadable approval request: \(error)"))
             return
         }
 
         let decision = await decide(request: request)
-        respond(descriptor: descriptor, decision: decision)
+        await respond(descriptor: descriptor, decision: decision)
         continuation?.yield(.resolved(request, decision))
     }
 
@@ -226,15 +229,14 @@ public actor ApprovalBroker {
         }
     }
 
-    private func respond(descriptor: Int32, decision: ApprovalDecision) {
-        guard let line = try? decision.encoded() else {
-            // Encoding our own decision failed; send a literal denial rather than nothing.
-            try? UnixSocket.writeLine(
-                descriptor: descriptor,
-                message: #"{"verdict":"deny","reason":"AgentHarness could not encode a decision and denied by default.","provenance":"internalError"}"#)
-            return
+    private func respond(descriptor: Int32, decision: ApprovalDecision) async {
+        // Encoding our own decision failing is not a reason to send nothing: silence is what the
+        // runtime reads as a hook that never decided, and that path executes the command.
+        let line = (try? decision.encoded())
+            ?? #"{"verdict":"deny","reason":"AgentHarness could not encode a decision and denied by default.","provenance":"internalError"}"#
+        try? await UnixSocket.blocking {
+            try UnixSocket.writeLine(descriptor: descriptor, message: line)
         }
-        try? UnixSocket.writeLine(descriptor: descriptor, message: line)
     }
 }
 

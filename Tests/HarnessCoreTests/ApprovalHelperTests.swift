@@ -136,7 +136,11 @@ struct ApprovalHelperTests {
 
         let run = try await Self.runHelper(payload: Self.samplePayload, socketPath: await broker.socketPath)
         #expect(run.exitCode == 0)
-        #expect(run.decision?.permissionDecision == "allow")
+        // The reason travels with the assertion: a bare "expected allow, got deny" says nothing
+        // about *which* denial path ran, and this one only ever fails under load on a CI runner.
+        #expect(
+            run.decision?.permissionDecision == "allow",
+            "Denied with: \(run.decision?.permissionDecisionReason ?? "no decision") — stderr: \(run.stderr)")
     }
 
     @Test("Relays an operator rejection with its feedback intact", .timeLimit(.minutes(1)))

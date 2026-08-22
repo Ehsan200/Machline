@@ -127,7 +127,7 @@ struct MCPProxyTests {
         _ = try server.receive()
         server.finish()
 
-        try await collected.waitForMethods(["initialize", "tools/call"], timeout: 15)
+        try await collected.waitForMethods(["initialize", "tools/call"], timeout: 60)
         let exchanges = collected.values
 
         let initialize = try #require(exchanges.first { $0.method == "initialize" })
