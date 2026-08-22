@@ -22,12 +22,25 @@ final class WindowModel {
         tabs = [AppModel()]
     }
 
-    /// The session in front. Always valid: closing the last tab opens an empty one.
-    var current: AppModel {
-        tabs.indices.contains(selection) ? tabs[selection] : tabs[0]
+    /// The session in front, or `nil` only during the instant `close` holds no tabs.
+    ///
+    /// `current` used to end in `tabs[0]`, which crashed outright the moment the array was empty —
+    /// which is exactly what `close` produces between removing the last tab and installing its
+    /// replacement.
+    private var frontTab: AppModel? {
+        tabs.indices.contains(selection) ? tabs[selection] : tabs.first
     }
 
-    var workspace: Workspace? { current.workspace }
+    /// The session in front. Always valid: closing the last tab opens an empty one.
+    ///
+    /// The fallback is a stored tab rather than one minted on demand: reading a property must not
+    /// mutate the model, or a plain view read becomes a state change during a SwiftUI update.
+    var current: AppModel { frontTab ?? fallback }
+
+    /// Stands in for the front tab in the one moment there is none. Never handed out otherwise.
+    private let fallback = AppModel()
+
+    var workspace: Workspace? { frontTab?.workspace }
 
     func select(_ index: Int) {
         guard tabs.indices.contains(index) else { return }
@@ -83,12 +96,15 @@ final class WindowModel {
     /// it would leave an ungated agent running with nothing watching it.
     func close(_ index: Int) {
         guard tabs.indices.contains(index) else { return }
+        // Read the project *before* the tab goes: the last tab is also the one `workspace` reads
+        // from, and asking after the removal is what crashed the window on ⌘W.
+        let project = workspace?.url
         tabs[index].stop()
         tabs.remove(at: index)
 
         if tabs.isEmpty {
             let replacement = AppModel()
-            if let workspace = workspace?.url { replacement.open(workspace: workspace) }
+            if let project { replacement.open(workspace: project) }
             tabs = [replacement]
             selection = 0
             return

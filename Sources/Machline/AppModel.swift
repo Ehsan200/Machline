@@ -31,6 +31,7 @@ final class AppModel: Identifiable {
 
     private func loadPersistedSettings() {
         recentProjects = recents.load()
+        machineConfiguration = MachineConfiguration.read()
         loadAutoApproval()
         loadSlashCommands()
         loadIsolation()
@@ -79,6 +80,24 @@ final class AppModel: Identifiable {
     /// Raised when the approval channel itself fails. While this is set, the gate is degraded.
     private(set) var approvalChannelFailure: String?
 
+    /// The permission rules the operator's own `~/.claude/settings.json` imposes.
+    ///
+    /// Only in force when sessions run `inherited`, and they outrank this app: a `deny` there
+    /// refuses a command the operator has just approved here, which is what made an approval look
+    /// like it did nothing. Read once per model so the panel and the sheet can say so.
+    private(set) var machineConfiguration = MachineConfiguration.none
+
+    /// The rules that actually apply to the sessions this model starts.
+    var enforcedMachineConfiguration: MachineConfiguration {
+        isolation == .inherited ? machineConfiguration : .none
+    }
+
+    /// The machine denylist entry that would refuse this command, if any.
+    func machineDenial(for command: String?) -> String? {
+        guard let command else { return nil }
+        return enforcedMachineConfiguration.deniesBashCommand(command)
+    }
+
     struct AuditEntry: Identifiable {
         let id = UUID()
         let at: Date
@@ -86,6 +105,9 @@ final class AppModel: Identifiable {
         let summary: String
         let verdict: ApprovalDecision.Verdict
         let provenance: ApprovalDecision.Provenance
+        /// The decision's own words. A call nobody read is the one whose reason matters most, so
+        /// the panel shows this verbatim rather than paraphrasing the provenance.
+        let reason: String
     }
 
     // MARK: Workspace
@@ -340,7 +362,9 @@ final class AppModel: Identifiable {
         // Re-run through the initialiser so a stored ceiling above the cap is clamped rather
         // than trusted.
         autoApproval = AutoApproval(
-            bashCeiling: stored.bashCeiling, workspaceFileEdits: stored.workspaceFileEdits)
+            bashCeiling: stored.bashCeiling,
+            workspaceFileEdits: stored.workspaceFileEdits,
+            holdsOutwardCommands: stored.holdsOutwardCommands)
     }
 
     func refreshRules() {
@@ -1012,7 +1036,8 @@ final class AppModel: Identifiable {
                 toolName: request.payload.toolName,
                 summary: request.payload.summary,
                 verdict: decision.verdict,
-                provenance: decision.provenance), at: 0)
+                provenance: decision.provenance,
+                reason: decision.reason), at: 0)
             refreshRules()
 
         case .approvalChannelFailure(let message):

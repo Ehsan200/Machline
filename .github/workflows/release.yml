@@ -9,9 +9,13 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    # Same toolchain as CI — see the note there.
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      - name: Show toolchain
+        run: swift --version
 
       # The tag is the single source of truth for the version: nothing in the repo to keep in
       # sync, and a build can always be traced back to the tag that produced it.

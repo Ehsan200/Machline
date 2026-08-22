@@ -100,6 +100,28 @@ struct ApprovalSheet: View {
                 }
             }
 
+            // Approving something the machine's own denylist refuses is a click that cannot take
+            // effect: the runtime evaluates its rules after our hook and blocks it anyway, and the
+            // agent is told the system refused it. Say so before the click, not after.
+            if let rule = model.machineDenial(for: pending.payload.bashCommand) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "hand.raised.fill")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Your ~/.claude settings deny this")
+                            .font(.callout.weight(.semibold))
+                        Text("`\(rule)` blocks it in the runtime, after this gate. Approving here "
+                            + "will not make it run — remove the rule, or run the session sealed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            }
+
             if isWritingFeedback {
                 labelled("Feedback to the agent") {
                     TextField(

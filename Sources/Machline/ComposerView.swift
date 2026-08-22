@@ -317,6 +317,8 @@ struct ComposerView: View {
     private var approvalsLabel: String {
         if model.isGateDegraded { return "degraded" }
         guard model.autoApproval.isEnabled else { return "enforced" }
+        // The preset has a name, so the strip uses it rather than spelling out the parts it set.
+        if model.autoApproval.isFullAuto { return "auto mode" }
         var parts: [String] = []
         if let ceiling = model.autoApproval.bashCeiling { parts.append("≤\(ceiling.label)") }
         if model.autoApproval.workspaceFileEdits { parts.append("edits") }

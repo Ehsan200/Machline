@@ -13,9 +13,15 @@ struct ApprovalsPanel: View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             isolationSection
             Hairline()
+            autoModeSection
+            Hairline()
             modeSection
             Hairline()
+            machineSection
+            Hairline()
             rulesSection
+            Hairline()
+            answeredSection
             Hairline()
             caveat
         }
@@ -67,6 +73,69 @@ struct ApprovalsPanel: View {
         }
     }
 
+    // MARK: - Auto mode
+
+    /// One switch for the common case: run the local work, stop at the door.
+    ///
+    /// The two controls below still exist for an operator who wants a different line, but nobody
+    /// should have to assemble "get on with it" out of a ceiling and a toggle.
+    private var autoModeSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            SwitchToggle(isOn: Binding(
+                get: { model.autoApproval.isFullAuto },
+                set: { model.autoApproval = $0 ? .auto : .manual })
+            ) {
+                HStack(spacing: Theme.Space.sm) {
+                    Text("Auto mode")
+                        .font(Theme.Typography.control)
+                        .foregroundStyle(Theme.Colors.text)
+                    if model.autoApproval.isFullAuto {
+                        Text("on")
+                            .font(Theme.Typography.monoMeta)
+                            .foregroundStyle(Theme.Colors.warning)
+                    }
+                }
+            }
+
+            Text(model.autoApproval.isFullAuto
+                ? "Local work runs unasked. Anything that leaves this machine still waits for you — "
+                    + "push, publish, release, deploy — and so does anything privileged, "
+                    + "destructive, or writing outside the project."
+                : "Runs local work without asking and holds back everything that leaves this "
+                    + "machine. Turning it on sets the two controls below.")
+                .font(Theme.Typography.meta)
+                .foregroundStyle(Theme.Colors.subtle)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if model.autoApproval.isEnabled {
+                SwitchToggle(isOn: Binding(
+                    get: { model.autoApproval.holdsOutwardCommands },
+                    set: { hold in
+                        model.autoApproval = AutoApproval(
+                            bashCeiling: model.autoApproval.bashCeiling,
+                            workspaceFileEdits: model.autoApproval.workspaceFileEdits,
+                            holdsOutwardCommands: hold)
+                    })
+                ) {
+                    Text("Always ask before anything leaves this machine")
+                        .font(Theme.Typography.control)
+                        .foregroundStyle(Theme.Colors.text)
+                }
+
+                Text(model.autoApproval.holdsOutwardCommands
+                    ? "git push, git commit, npm publish, docker push, gh release, kubectl apply, "
+                        + "terraform apply, scp, rsync — held back whatever the ceiling says."
+                    : "Nothing is held back: at the network ceiling a push or a publish runs "
+                        + "unread.")
+                    .font(Theme.Typography.meta)
+                    .foregroundStyle(model.autoApproval.holdsOutwardCommands
+                        ? Theme.Colors.subtle
+                        : Theme.Colors.error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     // MARK: - Mode
 
     private var modeSection: some View {
@@ -85,7 +154,7 @@ struct ApprovalsPanel: View {
                         .init("benign", label: "auto ≤ benign",
                               detail: "plain commands with no risk signals"),
                         .init("network", label: "auto ≤ network",
-                              detail: "also curl, git push, pipes, and chained commands")
+                              detail: "also curl, pipes, and chained commands")
                     ],
                     tint: model.autoApproval.bashCeiling == nil
                         ? Theme.Colors.text
@@ -100,7 +169,9 @@ struct ApprovalsPanel: View {
             SwitchToggle(isOn: Binding(
                 get: { model.autoApproval.workspaceFileEdits },
                 set: { model.autoApproval = AutoApproval(
-                    bashCeiling: model.autoApproval.bashCeiling, workspaceFileEdits: $0) })
+                    bashCeiling: model.autoApproval.bashCeiling,
+                    workspaceFileEdits: $0,
+                    holdsOutwardCommands: model.autoApproval.holdsOutwardCommands) })
             ) {
                 Text("Auto-approve edits inside the project")
                     .font(Theme.Typography.control)
@@ -118,7 +189,8 @@ struct ApprovalsPanel: View {
     private func setCeiling(_ level: RiskClassifier.Level?) {
         model.autoApproval = AutoApproval(
             bashCeiling: level,
-            workspaceFileEdits: model.autoApproval.workspaceFileEdits)
+            workspaceFileEdits: model.autoApproval.workspaceFileEdits,
+            holdsOutwardCommands: model.autoApproval.holdsOutwardCommands)
     }
 
     private var ceilingLabel: String {
@@ -136,10 +208,130 @@ struct ApprovalsPanel: View {
             return "Runs plain commands with no risk signals. Anything piped, chained, "
                 + "substituted, or matching a known pattern still waits for you."
         case .network:
-            return "Also runs commands that reach the network or are chained — curl, git push, "
-                + "pipes, and substitutions — without asking."
+            return "Also runs commands that reach the network or are chained — curl, pipes, and "
+                + "substitutions — without asking."
         case .privileged, .destructive:
             return "Above the permitted ceiling."
+        }
+    }
+
+    // MARK: - Machine rules
+
+    /// The rules that are not ours.
+    ///
+    /// With machine config inherited, the CLI also reads `~/.claude/settings.json`, and a `deny`
+    /// there outranks this gate: approve the command here and the runtime refuses it anyway, with
+    /// nothing on screen explaining why. Listing them is the explanation.
+    @ViewBuilder
+    private var machineSection: some View {
+        let configuration = model.enforcedMachineConfiguration
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack {
+                Text("From ~/.claude")
+                    .font(Theme.Typography.control)
+                    .foregroundStyle(Theme.Colors.muted)
+                Spacer(minLength: Theme.Space.sm)
+                if !configuration.denyRules.isEmpty {
+                    Text("\(configuration.denyRules.count) deny")
+                        .font(Theme.Typography.monoMeta)
+                        .foregroundStyle(Theme.Colors.error)
+                }
+            }
+
+            if model.isolation == .sealed {
+                Text("Sealed sessions read none of it, so only the rules above apply.")
+                    .font(Theme.Typography.meta)
+                    .foregroundStyle(Theme.Colors.subtle)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if configuration.isEmpty {
+                Text("Your Claude configuration adds no permission rules of its own.")
+                    .font(Theme.Typography.meta)
+                    .foregroundStyle(Theme.Colors.subtle)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                if !configuration.denyRules.isEmpty {
+                    Text("These outrank this gate. Approving one of them here still ends in the "
+                        + "runtime refusing it — the agent is told the system blocked it.")
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(Theme.Colors.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    ForEach(configuration.denyRules, id: \.self) { rule in
+                        HStack(spacing: Theme.Space.sm) {
+                            Text("deny")
+                                .font(Theme.Typography.monoMeta)
+                                .foregroundStyle(Theme.Colors.error)
+                            Text(rule)
+                                .font(Theme.Typography.monoMeta)
+                                .foregroundStyle(Theme.Colors.text)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+
+                if configuration.preToolUseHookCount > 0 {
+                    Text("\(configuration.preToolUseHookCount) of your own PreToolUse hook(s) run "
+                        + "alongside this gate and can refuse a call on their own.")
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - Answered without you
+
+    /// What the gate decided on its own, most recent first.
+    ///
+    /// Auto mode is only tolerable if what it did is visible where it was switched on, rather than
+    /// scrolled past in a rail somewhere. Each row carries the decision's own reason.
+    @ViewBuilder
+    private var answeredSection: some View {
+        let answered = model.auditLog.filter { $0.provenance == .autoApproved }.prefix(8)
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack {
+                Text("Answered automatically")
+                    .font(Theme.Typography.control)
+                    .foregroundStyle(Theme.Colors.muted)
+                Spacer(minLength: Theme.Space.sm)
+                if !answered.isEmpty {
+                    Text("\(answered.count)")
+                        .font(Theme.Typography.monoMeta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                }
+            }
+
+            if answered.isEmpty {
+                Text(model.autoApproval.isEnabled
+                    ? "Nothing yet. Calls answered without you will be listed here."
+                    : "Nothing is answered without you.")
+                    .font(Theme.Typography.meta)
+                    .foregroundStyle(Theme.Colors.subtle)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(answered) { entry in
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: Theme.Space.sm) {
+                            Text("auto")
+                                .font(Theme.Typography.monoMeta)
+                                .foregroundStyle(Theme.Colors.warning)
+                            Text(entry.summary)
+                                .font(Theme.Typography.monoMeta)
+                                .foregroundStyle(Theme.Colors.text)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 0)
+                        }
+                        Text(entry.reason)
+                            .font(Theme.Typography.meta)
+                            .foregroundStyle(Theme.Colors.subtle)
+                            .lineLimit(2)
+                    }
+                }
+            }
         }
     }
 

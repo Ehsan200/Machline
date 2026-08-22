@@ -23,8 +23,22 @@ public struct RiskClassifier: Sendable {
         public let signals: [String]
         /// Substrings the sheet should highlight in the command.
         public let highlights: [String]
+        /// The command pushes something out of this machine and cannot be taken back — a push, a
+        /// publish, a release, a remote copy.
+        ///
+        /// Tracked apart from `level` because reversibility is a different axis from risk: `curl`
+        /// and `git push` are both "network", but only one of them is visible to other people a
+        /// second later. Auto mode holds these back whatever its ceiling.
+        public let isOutward: Bool
 
         public var recommendsDenyByDefault: Bool { level >= .privileged }
+
+        public init(level: Level, signals: [String], highlights: [String], isOutward: Bool = false) {
+            self.level = level
+            self.signals = signals
+            self.highlights = highlights
+            self.isOutward = isOutward
+        }
     }
 
     /// Tools that write, by name. Write-capable MCP tools are flagged separately by the hub.
@@ -67,14 +81,37 @@ public struct RiskClassifier: Sendable {
         ("curl ", "outbound network"),
         ("wget ", "outbound network"),
         ("nc ", "raw socket"),
-        ("ssh ", "remote shell"),
+        ("ssh ", "remote shell")
+    ]
+
+    /// Commands that put something somewhere other people can see, or that no later command here
+    /// can undo. These are the holdouts auto mode always asks about.
+    ///
+    /// `git commit` is on the list because a commit is what the pushes are made of, and because an
+    /// operator who wants their own hand on the history wants it here rather than one step later.
+    private static let outwardSignals: [(pattern: String, signal: String)] = [
+        ("git push", "publishes commits"),
+        ("git commit", "writes history"),
+        ("git tag", "writes a tag"),
         ("scp ", "remote copy"),
         ("rsync ", "remote sync"),
-        ("git push", "publishes commits"),
         ("npm publish", "publishes a package"),
+        ("yarn publish", "publishes a package"),
+        ("pnpm publish", "publishes a package"),
+        ("cargo publish", "publishes a crate"),
+        ("pip upload", "publishes a package"),
+        ("twine upload", "publishes a package"),
         ("docker push", "publishes an image"),
         ("gh pr create", "opens a pull request"),
-        ("gh release", "publishes a release")
+        ("gh pr merge", "merges a pull request"),
+        ("gh release", "publishes a release"),
+        ("kubectl apply", "changes a cluster"),
+        ("kubectl rollout", "changes a cluster"),
+        ("helm upgrade", "changes a cluster"),
+        ("helm install", "changes a cluster"),
+        ("terraform apply", "changes infrastructure"),
+        ("aws ", "cloud API call"),
+        ("gcloud ", "cloud API call")
     ]
 
     public init() {}
@@ -104,6 +141,14 @@ public struct RiskClassifier: Sendable {
         scan(Self.privilegedSignals, .privileged)
         scan(Self.networkSignals, .network)
 
+        var isOutward = false
+        for entry in Self.outwardSignals where haystack.contains(entry.pattern.lowercased()) {
+            isOutward = true
+            signals.append(entry.signal)
+            highlights.append(entry.pattern)
+            if level < .network { level = .network }
+        }
+
         // Shell indirection defeats pattern matching outright, so flag it rather than pretending
         // the command has been understood.
         for (pattern, signal) in [
@@ -117,7 +162,8 @@ public struct RiskClassifier: Sendable {
         return Assessment(
             level: level,
             signals: Array(Set(signals)).sorted(),
-            highlights: Array(Set(highlights)).sorted())
+            highlights: Array(Set(highlights)).sorted(),
+            isOutward: isOutward)
     }
 
     private func assessNonBashTool(payload: HookPayload) -> Assessment {

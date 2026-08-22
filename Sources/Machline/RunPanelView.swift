@@ -72,15 +72,22 @@ struct RunPanelView: View {
         .background(Theme.Colors.panel)
         // `/context`, `/permissions`, and `/mcp` answer here rather than in a sheet: this is where
         // the controls are, so a read-only copy of the panel would be a dead end.
+        // The hop off this turn is not cosmetic. An `onChange` handler runs *inside* the view
+        // update, so opening a section with `withAnimation` there queued a transaction that
+        // SwiftUI then flushed mid-update — `AttributeGraph precondition failure: setting value
+        // during update`, which aborts the process. Typing `/context` crashed the app outright.
+        // Deferring to the next main-actor turn puts both writes safely after the update.
         .onChange(of: model.focusedPanelSection) { _, section in
             guard let section else { return }
-            withAnimation(.easeOut(duration: 0.15)) {
-                switch section {
-                case .context: isUsageExpanded = true
-                case .approvals: isApprovalsExpanded = true
+            Task { @MainActor in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    switch section {
+                    case .context: isUsageExpanded = true
+                    case .approvals: isApprovalsExpanded = true
+                    }
                 }
+                model.focusedPanelSection = nil
             }
-            model.focusedPanelSection = nil
         }
     }
 

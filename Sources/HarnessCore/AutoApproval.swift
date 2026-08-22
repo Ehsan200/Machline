@@ -28,18 +28,55 @@ public struct AutoApproval: Sendable, Hashable, Codable {
     /// workbench shows it as a diff and can discard it — and a write outside it is not.
     public var workspaceFileEdits: Bool
 
+    /// Never answer for a command that puts something outside this machine, whatever the ceiling.
+    ///
+    /// `RiskClassifier.Assessment.isOutward` marks those — a push, a publish, a release, a remote
+    /// copy, a cluster change. They are the calls an operator wants their own hand on, and they are
+    /// what makes a broad ceiling tolerable at all.
+    public var holdsOutwardCommands: Bool
+
     /// The highest ceiling that may be set. See `bashCeiling`.
     public static let maximumBashCeiling = RiskClassifier.Level.network
 
     /// Ask before everything. The default, and what the app starts in.
     public static let manual = AutoApproval(bashCeiling: nil, workspaceFileEdits: false)
 
-    public init(bashCeiling: RiskClassifier.Level? = nil, workspaceFileEdits: Bool = false) {
+    /// Get on with it: run local work unasked, and stop at the door.
+    ///
+    /// Everything the classifier reads as benign or network-level is answered automatically, and
+    /// so is every file edit inside the project. What still reaches the operator: anything
+    /// privileged or destructive, any write outside the project, and every outward command —
+    /// `git push`, `npm publish`, `gh release`, `terraform apply`, and the rest of that list.
+    public static let auto = AutoApproval(
+        bashCeiling: .network, workspaceFileEdits: true, holdsOutwardCommands: true)
+
+    public init(
+        bashCeiling: RiskClassifier.Level? = nil,
+        workspaceFileEdits: Bool = false,
+        holdsOutwardCommands: Bool = true
+    ) {
         self.bashCeiling = bashCeiling.map { min($0, Self.maximumBashCeiling) }
         self.workspaceFileEdits = workspaceFileEdits
+        self.holdsOutwardCommands = holdsOutwardCommands
+    }
+
+    /// Decoded by hand so a setting stored before `holdsOutwardCommands` existed reads back as the
+    /// safe value rather than failing to decode and silently resetting the whole mode.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            bashCeiling: try container.decodeIfPresent(RiskClassifier.Level.self, forKey: .bashCeiling),
+            workspaceFileEdits: try container.decodeIfPresent(Bool.self, forKey: .workspaceFileEdits)
+                ?? false,
+            holdsOutwardCommands: try container.decodeIfPresent(
+                Bool.self, forKey: .holdsOutwardCommands) ?? true)
     }
 
     public var isEnabled: Bool { bashCeiling != nil || workspaceFileEdits }
+
+    /// True when this is exactly the `auto` preset, so the interface can name it rather than
+    /// describing its parts.
+    public var isFullAuto: Bool { self == .auto }
 
     /// Tools whose writes `workspaceFileEdits` covers.
     public static let editTools: Set<String> = ["Write", "Edit", "MultiEdit", "NotebookEdit"]
@@ -61,6 +98,9 @@ public struct AutoApproval: Sendable, Hashable, Codable {
 
         guard payload.bashCommand != nil else { return nil }
         guard let bashCeiling, assessment.level <= bashCeiling else { return nil }
+        // The one thing a ceiling cannot express: a command at or below it that still leaves the
+        // machine. Those are held back so auto mode never publishes anything on its own.
+        if holdsOutwardCommands, assessment.isOutward { return nil }
         return ApprovalDecision(
             verdict: .allow,
             reason: "Auto-approved: \(assessment.level.label) command, at or below the "

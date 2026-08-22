@@ -142,7 +142,17 @@ extension AppModel {
                     ? Theme.Colors.error
                     : (autoApproval.isEnabled ? Theme.Colors.warning : Theme.Colors.text)),
             .init(label: "Standing rules", value: "\(activeRules.count)"),
-            .init(label: "Static denylist", value: "\(SessionConfiguration.defaultDenylist.count) patterns")
+            .init(label: "Static denylist", value: "\(SessionConfiguration.defaultDenylist.count) patterns"),
+            // Not ours, and it outranks us: a deny here refuses a call this gate has approved.
+            .init(
+                label: "Your ~/.claude denies",
+                value: enforcedMachineConfiguration.denyRules.isEmpty
+                    ? "none"
+                    : "\(enforcedMachineConfiguration.denyRules.count) rule(s) — these override "
+                        + "an approval",
+                tint: enforcedMachineConfiguration.denyRules.isEmpty
+                    ? Theme.Colors.text
+                    : Theme.Colors.warning)
         ]
 
         var usage: [StatusReport.Row] = [
@@ -238,8 +248,10 @@ extension AppModel {
     private var approvalSummary: String {
         guard autoApproval.isEnabled else { return "every call asks" }
         var parts: [String] = []
+        if autoApproval.isFullAuto { return "auto mode — outward calls still ask" }
         if let ceiling = autoApproval.bashCeiling { parts.append("auto ≤ \(ceiling.label)") }
         if autoApproval.workspaceFileEdits { parts.append("auto project edits") }
+        if autoApproval.holdsOutwardCommands { parts.append("outward calls ask") }
         return parts.joined(separator: ", ")
     }
 

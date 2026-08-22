@@ -273,10 +273,14 @@ struct TimelineView: View {
 
     /// Scrolls to the foot.
     ///
-    /// The hop through the main queue matters: a scroll issued in the same pass as the content
-    /// change lands against the old layout, leaving the view short of the end.
+    /// The hop off this pass matters: a scroll issued in the same pass as the content change lands
+    /// against the old layout, leaving the view short of the end.
+    ///
+    /// It is a main-actor turn rather than a `DispatchQueue.main.async`: a queued block can be
+    /// drained by a nested run loop while AppKit is still laying out, and an animated `scrollTo`
+    /// landing there is a state change during a view update — the abort in `AttributeGraph`.
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
-        DispatchQueue.main.async {
+        Task { @MainActor in
             if animated {
                 withAnimation(.easeOut(duration: 0.22)) {
                     proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)

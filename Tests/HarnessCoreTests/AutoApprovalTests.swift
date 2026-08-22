@@ -76,6 +76,67 @@ struct AutoApprovalTests {
         #expect(AutoApproval(bashCeiling: .benign).bashCeiling == .benign)
     }
 
+    // MARK: Auto mode
+
+    /// The whole point of the preset: local work runs, and nothing leaves the machine unread.
+    @Test("Auto mode runs local work and holds everything outward")
+    func autoModeRunsLocalWorkOnly() {
+        #expect(decision(.auto, bash("swift build"))?.verdict == .allow)
+        #expect(decision(.auto, bash("cat x | wc -l"))?.verdict == .allow)
+        #expect(decision(.auto, bash("curl https://example.com"))?.verdict == .allow)
+        #expect(decision(.auto, edit(path: "/work/src/main.swift"))?.verdict == .allow)
+
+        for outward in [
+            "git push origin main",
+            "git commit -m 'x'",
+            "git tag v1.0.0",
+            "npm publish",
+            "docker push acme/app:1",
+            "gh release create v1",
+            "kubectl apply -f deploy.yaml",
+            "terraform apply -auto-approve",
+            "scp build.zip host:/tmp",
+            "rsync -a dist/ host:/srv"
+        ] {
+            #expect(decision(.auto, bash(outward)) == nil, "\(outward) must still ask")
+        }
+    }
+
+    /// The holdout is about reversibility, not risk level, so it must survive a ceiling that
+    /// otherwise covers the command.
+    @Test("The outward holdout outranks the ceiling")
+    func outwardHoldoutBeatsTheCeiling() {
+        let withHoldout = AutoApproval(bashCeiling: .network, holdsOutwardCommands: true)
+        let without = AutoApproval(bashCeiling: .network, holdsOutwardCommands: false)
+
+        #expect(decision(withHoldout, bash("git push")) == nil)
+        #expect(decision(without, bash("git push"))?.verdict == .allow)
+    }
+
+    /// Auto mode is a preset, not a mode flag: it must be exactly the parts it claims to set, or
+    /// the switch in the panel reads back as off the moment anything else is touched.
+    @Test("Auto mode is the sum of its stated parts")
+    func autoModeIsItsParts() {
+        #expect(AutoApproval.auto.bashCeiling == .network)
+        #expect(AutoApproval.auto.workspaceFileEdits)
+        #expect(AutoApproval.auto.holdsOutwardCommands)
+        #expect(AutoApproval.auto.isFullAuto)
+        #expect(!AutoApproval.manual.isFullAuto)
+        #expect(!AutoApproval(bashCeiling: .network, workspaceFileEdits: true,
+                              holdsOutwardCommands: false).isFullAuto)
+    }
+
+    /// A setting stored before the holdout existed must come back with the holdout on, not decode
+    /// into nothing and silently reset the mode.
+    @Test("A setting stored without the holdout decodes with it enabled")
+    func storedSettingGainsTheHoldout() throws {
+        let stored = Data(#"{"bashCeiling":1,"workspaceFileEdits":true}"#.utf8)
+        let decoded = try JSONDecoder().decode(AutoApproval.self, from: stored)
+        #expect(decoded.bashCeiling == .network)
+        #expect(decoded.workspaceFileEdits)
+        #expect(decoded.holdsOutwardCommands)
+    }
+
     // MARK: File edits
 
     @Test("An edit inside the workspace is auto-approved when enabled")
