@@ -60,11 +60,21 @@ struct GitWorkbenchView: View {
             Button("Cancel", role: .cancel) { git.pendingPush = nil }
         } message: {
             if let push = git.pendingPush {
-                Text(push.upstream == nil
-                    ? "\(push.commitCount) commit(s) on \(push.branch). This branch has no "
-                        + "upstream yet, so it will be published to origin and start tracking it."
-                    : "\(push.commitCount) commit(s) from \(push.branch) to \(push.upstream!).")
+                Text(pushConfirmation(push))
             }
+        }
+        // Where this repository pushes is its own setting, and the first push in a tree with more
+        // than one remote stops here to take it. The panel is the confirmation for that push: it
+        // names every remote by push URL and prints the commands, which the alert above cannot.
+        .sheet(item: $git.pushConfiguration) { configuration in
+            PushSettingsPanel(
+                configuration: configuration,
+                onCancel: { git.pushConfiguration = nil },
+                onConfirm: { policy, remembers in
+                    configuration.isForPush
+                        ? git.confirmPushConfiguration(policy: policy, remembers: remembers)
+                        : git.savePushConfiguration(policy: policy)
+                })
         }
         // The three strategies differ in whether they rewrite commits or leave conflict markers,
         // so a repository with no preference of its own gets asked rather than guessed at.
@@ -149,10 +159,20 @@ struct GitWorkbenchView: View {
                 ) {
                     git.requestPush()
                 }
+                // Only where there is a choice to make. One remote is not a policy.
+                if git.remotes.count > 1 {
+                    IconButton(systemName: "slider.horizontal.3", help: "Where this repository pushes…") {
+                        git.openPushSettings()
+                    }
+                }
                 Spacer(minLength: 0)
                 Text(fetchLabel)
                     .font(Theme.Typography.meta)
                     .foregroundStyle(Theme.Colors.subtle)
+            }
+
+            if !git.pushResults.isEmpty {
+                pushResults
             }
 
             if let error = git.remoteError {
@@ -162,6 +182,50 @@ struct GitWorkbenchView: View {
                     .lineLimit(2)
             }
         }
+    }
+
+    /// What each remote made of the last push.
+    ///
+    /// Stays until dismissed. A push to three remotes where the third refused is not a failure and
+    /// not a success, and the only honest form of that is one line each.
+    private var pushResults: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(git.pushResults) { result in
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
+                    Image(systemName: PushResultStyle.icon(result.outcome))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(PushResultStyle.colour(result.outcome))
+                        .frame(width: 10)
+                    Text(result.remote)
+                        .font(Theme.Typography.monoMeta)
+                        .foregroundStyle(Theme.Colors.text)
+                    Text(PushResultStyle.label(result.outcome))
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(PushResultStyle.colour(result.outcome))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+            }
+            QuietButton(title: "Dismiss") { git.dismissPushResults() }
+        }
+        .padding(.vertical, Theme.Space.xs)
+    }
+
+    /// The alert's message. Names every remote it is about to reach, because "push" in a repository
+    /// with three remotes is three publications.
+    private func pushConfirmation(_ push: GitPanelModel.PendingPush) -> String {
+        let commits = "\(push.commitCount) commit(s) on \(push.branch)"
+        if push.targets.count > 1 {
+            return commits + " to \(push.targets.count) remotes: "
+                + push.targets.map(\.name).joined(separator: ", ") + "."
+        }
+        guard let target = push.targets.first else { return commits + "." }
+        if push.upstream == nil {
+            return commits + ". This branch has no upstream yet, so it will be published to "
+                + "\(target.name) and start tracking it."
+        }
+        return "\(commits) to \(push.upstream ?? target.name)."
     }
 
     private var fetchLabel: String {

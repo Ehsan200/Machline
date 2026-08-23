@@ -130,6 +130,10 @@ struct DiffCard: View {
     let onExpand: () -> Void
 
     @State private var isCollapsed = false
+    /// The card's inner width, which the rows cannot ask for themselves: inside a horizontal
+    /// scroll view `maxWidth: .infinity` resolves to the widest row, so short lines ended their
+    /// green or red band mid-card and left a bar of bare panel to the right of it.
+    @State private var viewportWidth: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -229,10 +233,19 @@ struct DiffCard: View {
                     }
                 }
                 .padding(.vertical, Theme.Space.xs)
+                // At least the card's width, and wider whenever the code is: the highlight is the
+                // line, not the text on it.
+                .frame(minWidth: viewportWidth, alignment: .leading)
             }
             // Belt and braces: a horizontal scroll view is free to overdraw its cross axis, and
             // this card sits directly under its own header.
             .clipped()
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { viewportWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, width in viewportWidth = width }
+                })
 
             if hidden > 0 {
                 Button(action: onExpand) {

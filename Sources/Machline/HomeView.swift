@@ -10,7 +10,9 @@ struct HomeView: View {
     @Bindable var model: AppModel
 
     @State private var draft = ""
+    @State private var projectSearch = ""
     @FocusState private var isComposerFocused: Bool
+    @FocusState private var isProjectSearchFocused: Bool
 
     @Environment(\.openWindow) private var openWindow
 
@@ -37,7 +39,14 @@ struct HomeView: View {
             // The chips come from every project the CLI knows about, not only the handful with
             // recent sessions below.
             model.loadKnownProjects()
-            isComposerFocused = true
+            // Opening a window is nearly always about getting back into a project, so the caret
+            // starts in the project filter. The composer is one Tab or one click away.
+            isProjectSearchFocused = true
+        }
+        // The projects arrive after the first frame; the field only exists once they do, so the
+        // focus has to be asked for again when it appears.
+        .onChange(of: allProjects.isEmpty) { _, isEmpty in
+            if isEmpty { isComposerFocused = true } else { isProjectSearchFocused = true }
         }
     }
 
@@ -50,12 +59,18 @@ struct HomeView: View {
     /// set: one click to open, ⌘-click for a second window.
     @ViewBuilder
     private var projectChips: some View {
-        let all = model.knownProjects.isEmpty ? model.recentProjects : model.knownProjects
+        let all = allProjects
         if !all.isEmpty {
+            let matches = Self.matching(all, query: projectSearch)
             VStack(alignment: .leading, spacing: Theme.Space.md) {
-                SectionLabel("Projects", trailing: "\(all.count)")
+                SectionLabel(
+                    "Projects",
+                    trailing: matches.count == all.count
+                        ? "\(all.count)" : "\(matches.count)/\(all.count)")
 
-                let shown = Array(all.prefix(Self.chipLimit))
+                projectSearchField(matches: matches)
+
+                let shown = Array(matches.prefix(Self.chipLimit))
                 let ambiguous = Self.ambiguousNames(in: shown)
 
                 ChipFlow(spacing: Theme.Space.sm) {
@@ -77,8 +92,14 @@ struct HomeView: View {
                     }
                 }
 
-                if all.count > Self.chipLimit {
-                    Text("\(all.count - Self.chipLimit) more in the project menu")
+                if matches.count > Self.chipLimit {
+                    Text("\(matches.count - Self.chipLimit) more — narrow the filter to reach them")
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                }
+
+                if matches.isEmpty {
+                    Text("No project matches “\(projectSearch)”")
                         .font(Theme.Typography.meta)
                         .foregroundStyle(Theme.Colors.subtle)
                 }
@@ -93,6 +114,75 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    /// Every project the CLI knows about, falling back to the recent handful before that list
+    /// lands.
+    private var allProjects: [URL] {
+        model.knownProjects.isEmpty ? model.recentProjects : model.knownProjects
+    }
+
+    /// The filter over the chips, and the window's first responder.
+    ///
+    /// Twenty chips is a lot to read; typing three letters is faster than finding the right one by
+    /// eye, and Return opens the top match without ever reaching for the mouse.
+    private func projectSearchField(matches: [URL]) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.Colors.subtle)
+
+            TextField("Filter projects", text: $projectSearch)
+                .textFieldStyle(.plain)
+                .font(Theme.Typography.control)
+                .foregroundStyle(Theme.Colors.text)
+                .focused($isProjectSearchFocused)
+                .onKeyPress(phases: .down) { press in
+                    switch press.key {
+                    case .return:
+                        guard let first = matches.first else { return .ignored }
+                        if press.modifiers.contains(.command) {
+                            openWindow(
+                                id: "session",
+                                value: WindowTarget(workspace: first, isUnique: true))
+                        } else {
+                            model.open(workspace: first)
+                        }
+                        return .handled
+                    case .escape:
+                        guard !projectSearch.isEmpty else { return .ignored }
+                        projectSearch = ""
+                        return .handled
+                    default:
+                        return .ignored
+                    }
+                }
+
+            if !projectSearch.isEmpty {
+                IconButton(systemName: "xmark.circle.fill", help: "Clear filter") {
+                    projectSearch = ""
+                }
+            }
+        }
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, Theme.Space.sm)
+        .background(Theme.Colors.panel)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Layout.radius))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Layout.radius)
+                .strokeBorder(
+                    isProjectSearchFocused
+                        ? Theme.Colors.accent.opacity(0.55) : Theme.Colors.border,
+                    lineWidth: 1))
+        .animation(.easeOut(duration: 0.12), value: isProjectSearchFocused)
+    }
+
+    /// Matches the project's own name and the path above it, so `iop/api` finds the one `api` that
+    /// belongs to that client.
+    static func matching(_ workspaces: [URL], query: String) -> [URL] {
+        let query = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else { return workspaces }
+        return workspaces.filter { $0.path.lowercased().contains(query) }
     }
 
     /// Leaf names carried by more than one of these projects.
@@ -199,6 +289,14 @@ struct HomeView: View {
 
     // MARK: - Projects
 
+    /// The one filter narrows the detail below the chips too — a page half-filtered would read as
+    /// a bug.
+    private var recentMatches: [(workspace: URL, sessions: [HistoricalSession])] {
+        let query = projectSearch.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !query.isEmpty else { return model.homeProjects }
+        return model.homeProjects.filter { $0.workspace.path.lowercased().contains(query) }
+    }
+
     @ViewBuilder
     private var projects: some View {
         if model.isLoadingHome && model.homeProjects.isEmpty {
@@ -208,11 +306,11 @@ struct HomeView: View {
                     .font(Theme.Typography.meta)
                     .foregroundStyle(Theme.Colors.subtle)
             }
-        } else if !model.homeProjects.isEmpty {
+        } else if !recentMatches.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 SectionLabel("Recent")
 
-                ForEach(model.homeProjects, id: \.workspace) { project in
+                ForEach(recentMatches, id: \.workspace) { project in
                     projectSection(project.workspace, sessions: project.sessions)
                 }
 

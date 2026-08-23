@@ -250,7 +250,7 @@ extension GitManager {
         return nil
     }
 
-    private func configValue(_ key: String) throws -> String? {
+    func configValue(_ key: String) throws -> String? {
         // `--get` exits 1 when the key is unset, which is an answer rather than a failure.
         let output = try runner.run(["config", "--get", key])
         let value = output.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -266,10 +266,15 @@ extension GitManager {
         try runner.check(["pull"] + strategy.arguments)
     }
 
-    /// Publishes the current branch.
+    /// Publishes the current branch to its own remote.
     ///
-    /// A branch with no upstream is pushed with `--set-upstream` to the default remote: the
-    /// alternative is an error telling the operator to run a command Machline could have run.
+    /// A branch with no upstream is pushed with `--set-upstream` to the resolved push target: the
+    /// alternative is an error telling the operator to run a command Machline could have run. That
+    /// target used to be the literal `origin`, which is wrong in a fork that calls its remotes
+    /// `upstream` and `fork`, and wrong again wherever `remote.pushDefault` says otherwise.
+    ///
+    /// Pushing to more than one remote goes through `push(branch:to:setUpstreamOn:)`, which reports
+    /// per remote instead of throwing on the first refusal.
     public func push() throws {
         let status = try status()
         if status.branch.hasUpstream {
@@ -280,7 +285,11 @@ extension GitManager {
             throw Failure.patchRejected(
                 standardError: "HEAD is detached — check out a branch before pushing.")
         }
-        try runner.check(["push", "--set-upstream", "origin", head])
+        guard let target = pushTarget(for: head) else {
+            throw Failure.patchRejected(
+                standardError: "This repository has no remote to push to.")
+        }
+        try runner.check(["push", "--set-upstream", target, head])
     }
 
     /// True when the repository has anything the operator has not committed.

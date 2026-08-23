@@ -50,12 +50,54 @@ final class GitPanelModel {
     var pullStrategyChoiceNeeded = false
     /// Set when a push is waiting on confirmation. Carries what would be published.
     var pendingPush: PendingPush?
+    /// Set when the operator has to decide where this repository pushes before anything is sent.
+    var pushConfiguration: PushConfiguration?
+    /// One line per remote from the last push, until dismissed. A push to several remotes has
+    /// several answers and no single one of them is the outcome.
+    private(set) var pushResults: [PushResult] = []
+    /// The remotes of the active repository, in config order. Read with every refresh — it is a
+    /// config lookup, not a network call.
+    private(set) var remotes: [GitRemote] = []
+    /// The remote a plain `git push` would reach for the current branch. Resolved off the main
+    /// actor with everything else, so the Push button never waits on `git config`.
+    private(set) var pushPrimary: String?
 
     struct PendingPush: Identifiable {
         let branch: String
         let upstream: String?
         let commitCount: Int
+        /// Where it goes, primary first. One entry for the ordinary single-remote repository.
+        let targets: [GitRemote]
+        /// The one that takes `--set-upstream`, if any.
+        let primary: String?
         var id: String { branch }
+    }
+
+    /// What the push settings panel is shown: the repository, its remotes, and the policy to open
+    /// on. The panel owns the editing and hands an answer back.
+    struct PushConfiguration: Identifiable {
+        let repository: URL
+        let branch: String
+        let remotes: [GitRemote]
+        let primary: String?
+        /// Ahead/behind against each remote's own copy of the branch, where it has one. Empty
+        /// until the reads behind the panel finish.
+        let divergences: [String: GitDivergence]
+        /// Remotes that appeared after the policy was last confirmed, which is why this reopened.
+        let unreviewed: [String]
+        let commitCount: Int
+        /// What the panel opens on: the stored policy, or everything for a repository that has
+        /// never been asked.
+        let suggestedPolicy: PushPolicy
+        /// True when a push is waiting on this answer, false when the operator opened the panel to
+        /// change the setting. Decides whether the confirming button pushes or only saves.
+        let isForPush: Bool
+
+        var id: URL { repository }
+
+        func targets(for policy: PushPolicy) -> [GitRemote] {
+            PushPlan.targets(for: policy, remotes: remotes, primary: primary)
+        }
     }
 
     /// How often to refresh remote-tracking refs while the window is open.
@@ -210,15 +252,155 @@ final class GitPanelModel {
 
     /// Stages a push for confirmation. Publishing is outward-facing, so it never happens on the
     /// click that asks for it.
+    ///
+    /// Three ways out. One remote: the ordinary confirmation, since there is nothing to decide.
+    /// Several remotes and no policy yet — or a policy decided against a different set of remotes:
+    /// the settings panel, which is itself the confirmation. Otherwise the policy answers where,
+    /// and the confirmation still answers whether.
     func requestPush() {
         guard let summary = activeSummary, let branch = summary.branch else { return }
+        pushResults = []
+
+        guard !remotes.isEmpty else {
+            remoteError = "This repository has no remote to push to."
+            return
+        }
+
+        let primary = pushPrimary
+
+        if PushSettings.shared.needsReview(for: activeRepository, remotes: remotes) {
+            openPushSettings(
+                branch: branch, primary: primary, commitCount: summary.ahead, isForPush: true)
+            return
+        }
+
+        let policy = PushSettings.shared.settings(for: activeRepository)?.policy ?? .primaryOnly
+        let targets = PushPlan.targets(for: policy, remotes: remotes, primary: primary)
+        guard !targets.isEmpty else {
+            // A policy naming only remotes that have since gone. Ask again rather than push
+            // somewhere it was never told to.
+            openPushSettings(
+                branch: branch, primary: primary, commitCount: summary.ahead, isForPush: true)
+            return
+        }
+
         pendingPush = PendingPush(
-            branch: branch, upstream: summary.upstream, commitCount: summary.ahead)
+            branch: branch, upstream: summary.upstream, commitCount: summary.ahead,
+            targets: targets, primary: primary)
+    }
+
+    /// Opens the settings panel for the active repository, with the divergence against each remote
+    /// filled in behind it.
+    ///
+    /// The counts need one `rev-list` per remote. They are read after the panel is on screen, not
+    /// before it: the panel is useful without them and a sheet that waits on subprocesses before
+    /// appearing is a button that does nothing for half a second.
+    func openPushSettings(
+        branch: String? = nil, primary: String? = nil, commitCount: Int? = nil,
+        isForPush: Bool = false
+    ) {
+        guard !remotes.isEmpty, let branch = branch ?? activeSummary?.branch else { return }
+        let repository = activeRepository
+        let remotes = self.remotes
+        let primary = primary ?? pushPrimary
+        pushConfiguration = PushConfiguration(
+            repository: repository,
+            branch: branch,
+            remotes: remotes,
+            primary: primary,
+            divergences: [:],
+            unreviewed: PushSettings.shared.unreviewedRemotes(for: repository, remotes: remotes),
+            commitCount: commitCount ?? activeSummary?.ahead ?? 0,
+            // Pre-set to everything, which is the answer most repositories want and exactly the
+            // one the panel exists to show before it is taken.
+            suggestedPolicy: PushSettings.shared.settings(for: repository)?.policy ?? .all,
+            isForPush: isForPush)
+
+        let manager = self.manager
+        Task {
+            let counts = await Task.detached(priority: .userInitiated) {
+                () -> [String: GitDivergence] in
+                var counts: [String: GitDivergence] = [:]
+                for remote in remotes {
+                    counts[remote.name] = manager.divergence(of: branch, from: remote.name)
+                }
+                return counts
+            }.value
+
+            // The panel may have been dismissed, or moved to another repository, while those ran.
+            guard let configuration = self.pushConfiguration,
+                  configuration.repository == repository else { return }
+            self.pushConfiguration = PushConfiguration(
+                repository: configuration.repository,
+                branch: configuration.branch,
+                remotes: configuration.remotes,
+                primary: configuration.primary,
+                divergences: counts,
+                unreviewed: configuration.unreviewed,
+                commitCount: configuration.commitCount,
+                suggestedPolicy: configuration.suggestedPolicy,
+                isForPush: configuration.isForPush)
+        }
+    }
+
+    /// Takes the panel's answer: remembers it if asked, then pushes.
+    ///
+    /// No second confirmation. The panel lists every remote by push URL and prints the commands it
+    /// is about to run, which is a stronger confirmation than the alert it would hand off to.
+    func confirmPushConfiguration(policy: PushPolicy, remembers: Bool) {
+        guard let configuration = pushConfiguration else { return }
+        pushConfiguration = nil
+
+        if remembers {
+            PushSettings.shared.store(
+                policy, remotes: configuration.remotes.map(\.name), for: configuration.repository)
+        }
+
+        let targets = configuration.targets(for: policy)
+        guard !targets.isEmpty else { return }
+        push(branch: configuration.branch, to: targets, primary: configuration.primary)
+    }
+
+    /// Saves a policy without pushing, for the panel opened from the sync bar rather than from a
+    /// Push that is waiting on it.
+    func savePushConfiguration(policy: PushPolicy) {
+        guard let configuration = pushConfiguration else { return }
+        pushConfiguration = nil
+        PushSettings.shared.store(
+            policy, remotes: configuration.remotes.map(\.name), for: configuration.repository)
     }
 
     func confirmPush() {
+        guard let push = pendingPush else { return }
         pendingPush = nil
-        performRemote { try $0.push() }
+        self.push(branch: push.branch, to: push.targets, primary: push.primary)
+    }
+
+    func dismissPushResults() {
+        pushResults = []
+    }
+
+    /// Runs the pushes and keeps every remote's answer.
+    ///
+    /// `remoteError` carries only what no row can say — a total failure. One rejected remote among
+    /// three is not an error banner, it is one row that says rejected next to two that say pushed.
+    private func push(branch: String, to targets: [GitRemote], primary: String?) {
+        let manager = self.manager
+        isFetching = true
+        remoteError = nil
+        Task {
+            let results = await Task.detached(priority: .userInitiated) { () -> [PushResult] in
+                manager.push(branch: branch, to: targets, setUpstreamOn: primary)
+            }.value
+
+            self.isFetching = false
+            self.pushResults = results
+            if results.allSatisfy(\.isFailure), results.count > 1 {
+                self.remoteError = "No remote accepted this push."
+            }
+            self.refreshSummaries()
+            self.refresh()
+        }
     }
 
     private func performRemote(_ operation: @escaping @Sendable (GitManager) throws -> Void) {
@@ -255,6 +437,14 @@ final class GitPanelModel {
         staged = []
         recentCommits = []
         selectedPath = nil
+        // Every one of these belongs to the repository being left. A push result from the previous
+        // tree sitting above the new one's sync bar would name remotes this repository has never
+        // heard of.
+        remotes = []
+        pushPrimary = nil
+        pushResults = []
+        pendingPush = nil
+        pushConfiguration = nil
         refresh()
     }
 
@@ -283,8 +473,18 @@ final class GitPanelModel {
     /// What one refresh came back with. `Sendable` so it can cross back from a detached task.
     private enum RefreshOutcome: Sendable {
         case notARepository
-        case read(GitStatus, [GitFileDiff], [GitFileDiff], [GitManager.Commit])
+        case read(Snapshot)
         case failed(String)
+    }
+
+    /// One reading of the repository, taken in a single hop off the main actor.
+    private struct Snapshot: Sendable {
+        let status: GitStatus
+        let unstaged: [GitFileDiff]
+        let staged: [GitFileDiff]
+        let commits: [GitManager.Commit]
+        let remotes: [GitRemote]
+        let pushPrimary: String?
     }
 
     /// Carries a git failure's text across the actor hop — the error itself need not be `Sendable`.
@@ -308,11 +508,18 @@ final class GitPanelModel {
                 do {
                     guard try manager.isRepository() else { return .notARepository }
                     let status = try manager.status()
-                    return .read(
-                        status,
-                        try manager.unstagedDiffIncludingUntracked(status: status),
-                        try manager.stagedDiff(),
-                        try manager.recentCommits(limit: 15))
+                    // Remotes come along for the ride: the push panel needs them, and reading them
+                    // here costs one `git config` in a hop that is already being made.
+                    let remotes = (try? manager.remotes()) ?? []
+                    return .read(Snapshot(
+                        status: status,
+                        unstaged: try manager.unstagedDiffIncludingUntracked(status: status),
+                        staged: try manager.stagedDiff(),
+                        commits: try manager.recentCommits(limit: 15),
+                        remotes: remotes,
+                        pushPrimary: status.branch.head.flatMap {
+                            manager.pushTarget(for: $0, remotes: remotes)
+                        }))
                 } catch {
                     return .failed(String(describing: error))
                 }
@@ -320,7 +527,7 @@ final class GitPanelModel {
 
             guard !Task.isCancelled else { return }
 
-            let result: Result<(GitStatus, [GitFileDiff], [GitFileDiff], [GitManager.Commit]), Error>
+            let result: Result<Snapshot, Error>
             switch outcome {
             case .notARepository:
                 await MainActor.run {
@@ -328,8 +535,8 @@ final class GitPanelModel {
                     self.isRefreshing = false
                 }
                 return
-            case .read(let status, let unstaged, let staged, let commits):
-                result = .success((status, unstaged, staged, commits))
+            case .read(let snapshot):
+                result = .success(snapshot)
             case .failed(let message):
                 result = .failure(RefreshFailure(message: message))
             }
@@ -338,12 +545,14 @@ final class GitPanelModel {
                 self.isRefreshing = false
                 self.isRepository = true
                 switch result {
-                case .success(let (status, unstaged, staged, commits)):
+                case .success(let snapshot):
                     self.revision &+= 1
-                    self.status = status
-                    self.unstaged = unstaged
-                    self.staged = staged
-                    self.recentCommits = commits
+                    self.status = snapshot.status
+                    self.unstaged = snapshot.unstaged
+                    self.staged = snapshot.staged
+                    self.recentCommits = snapshot.commits
+                    self.remotes = snapshot.remotes
+                    self.pushPrimary = snapshot.pushPrimary
                     self.errorMessage = nil
                 case .failure(let error):
                     self.errorMessage = String(describing: error)

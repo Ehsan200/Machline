@@ -50,7 +50,9 @@ changed, the MCP hub with its per-agent tool grants and traffic inspector, and d
 
 **Commit from the Git workbench.** Stage by hunk, write the message yourself or have one drafted
 from the staged diff, then commit and push. Untracked files sit alongside edited ones rather than
-disappearing until they are added.
+disappearing until they are added. A repository with more than one remote is asked once where it
+publishes — all of them, the primary only, or a set you pick — and the panel names each remote by
+its push URL and prints the commands before running them.
 
 **Open the shell** with ⌃` for the things that are quicker done by hand.
 
