@@ -815,6 +815,29 @@ final class AppModel: Identifiable {
     private(set) var malformedLines: [String] = []
     private(set) var standardError: [String] = []
 
+    /// How many stderr chunks the operator has already waved away. Counted in chunks rather than
+    /// lines because that is what arrives: stderr is yielded as raw writes, not split for us.
+    private var acknowledgedErrorChunks = 0
+
+    /// What the CLI has written to stderr and the operator has not dismissed.
+    ///
+    /// The CLI puts real warnings here — a flag it no longer honours, a settings file it could not
+    /// read, a model it silently swapped — and they were only reachable through `/status`, which
+    /// nobody opens while everything still looks fine. Surfaced as a banner instead.
+    ///
+    /// Split, trimmed and de-duplicated: one warning repeated on every turn is one line, not forty.
+    var pendingWarnings: [String] {
+        var seen = Set<String>()
+        return standardError.dropFirst(acknowledgedErrorChunks)
+            .flatMap { $0.split(separator: "\n") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    func dismissWarnings() {
+        acknowledgedErrorChunks = standardError.count
+    }
+
     // MARK: Panels
 
     var git: GitPanelModel?
@@ -1224,6 +1247,11 @@ final class AppModel: Identifiable {
         cumulativeCostUSD = 0
         agentUpdatedAt = [:]
         lastTranscriptCount = [:]
+        // Diagnostics describe a process. Carrying the last one's stderr into a restart makes the
+        // banner accuse a session that has not said anything yet.
+        standardError = []
+        malformedLines = []
+        acknowledgedErrorChunks = 0
 
         do {
             let (session, id) = try Self.makeSession(

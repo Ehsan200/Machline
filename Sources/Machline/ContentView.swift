@@ -39,6 +39,12 @@ struct ContentView: View {
                 SessionTabStrip(window: window)
                 Hairline()
 
+                // Mounted unconditionally, and it decides for itself whether to draw anything.
+                // stderr lands on the session pump, so reading it from *this* body would rebuild
+                // the whole window — rails, timeline, composer — every time the CLI clears its
+                // throat. Kept inside its own view, only the banner rebuilds.
+                WarningBanner(model: model)
+
                 if model.isGateDegraded {
                     degradedBanner
                     Hairline(color: Theme.Colors.error)
@@ -291,6 +297,80 @@ struct ContentView: View {
         .padding(.vertical, Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.Colors.error.opacity(0.12))
+    }
+}
+
+/// What the CLI wrote to stderr, in the operator's way but not in their face.
+///
+/// These are worth seeing exactly when a session opens — a flag the CLI no longer honours, a
+/// settings file it could not read, a model it quietly swapped are all cheap to act on then and
+/// expensive to discover an hour later. Until now they only existed in `/status`, which nobody
+/// opens while everything still looks fine.
+///
+/// One line collapsed, the rest behind a disclosure, and a dismiss that means it.
+struct WarningBanner: View {
+    @Bindable var model: AppModel
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        let warnings = model.pendingWarnings
+        if !warnings.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                HStack(spacing: Theme.Space.md) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Colors.warning)
+                    Text(warnings.count == 1
+                        ? "Claude Code wrote a warning"
+                        : "Claude Code wrote \(warnings.count) warnings")
+                        .font(Theme.Typography.controlMedium)
+                        .foregroundStyle(Theme.Colors.textStrong)
+                        .fixedSize()
+
+                    // The first line collapsed: most warnings are one line, and reading it should
+                    // not cost a click.
+                    if !isExpanded, let first = warnings.first {
+                        Text(first)
+                            .font(Theme.Typography.monoMeta)
+                            .foregroundStyle(Theme.Colors.muted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    Spacer(minLength: Theme.Space.md)
+
+                    if warnings.count > 1 || !isExpanded {
+                        QuietButton(title: isExpanded ? "Hide" : "Show") { isExpanded.toggle() }
+                    }
+                    IconButton(systemName: "xmark", help: "Dismiss these warnings") {
+                        isExpanded = false
+                        model.dismissWarnings()
+                    }
+                }
+
+                if isExpanded {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                            ForEach(warnings, id: \.self) { warning in
+                                Text(warning)
+                                    .font(Theme.Typography.monoSmall)
+                                    .foregroundStyle(Theme.Colors.muted)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 140)
+                }
+            }
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.vertical, Theme.Space.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.Colors.warning.opacity(0.10))
+
+            Hairline(color: Theme.Colors.warning.opacity(0.4))
+        }
     }
 }
 

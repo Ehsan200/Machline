@@ -183,23 +183,70 @@ struct DiffCard: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, Theme.Space.sm)
+        // Its own ground, above the lines. The card's background sits behind *everything*, so a
+        // row that manages to draw outside the body would otherwise show through the file path
+        // rather than behind it.
+        .background(Theme.Colors.panel)
+        .zIndex(1)
+    }
+
+    /// How many lines the card draws before handing the rest to Expand.
+    ///
+    /// The cap used to be `maxHeight` on the scroll view, which bounds the frame it is *given* and
+    /// not the height it *draws*: a diff longer than the cap kept its full height, was centred in
+    /// the space it had been handed, and painted over the header above it — which is how a file
+    /// path ended up with code sitting on top of it. Counting rows means the card never lays out
+    /// anything it cannot hold. It is also the cheaper of the two: rows past the cap are never
+    /// built at all.
+    ///
+    /// 14 rows at 11.5pt mono is a little under `embeddedDiffMaxHeight`.
+    private static let visibleLineLimit = 14
+
+    /// The hunks flattened into one run, with `nil` where one hunk ends and the next begins.
+    private var rows: [DiffLine?] {
+        var rows: [DiffLine?] = []
+        for (index, hunk) in preview.hunks.enumerated() {
+            if index > 0 { rows.append(nil) }
+            rows.append(contentsOf: hunk.map { Optional($0) })
+        }
+        return rows
     }
 
     private var body_: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(preview.hunks.enumerated()), id: \.offset) { index, hunk in
-                    if index > 0 {
-                        Hairline(color: Theme.Colors.border)
-                    }
-                    ForEach(hunk) { line in
-                        DiffLineRow(line: line)
+        let rows = rows
+        let shown = rows.prefix(Self.visibleLineLimit)
+        let hidden = rows.count - shown.count
+
+        return VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(shown.enumerated()), id: \.offset) { _, row in
+                        if let row {
+                            DiffLineRow(line: row)
+                        } else {
+                            Hairline(color: Theme.Colors.border)
+                        }
                     }
                 }
+                .padding(.vertical, Theme.Space.xs)
             }
-            .padding(.vertical, Theme.Space.xs)
+            // Belt and braces: a horizontal scroll view is free to overdraw its cross axis, and
+            // this card sits directly under its own header.
+            .clipped()
+
+            if hidden > 0 {
+                Button(action: onExpand) {
+                    Text("\(hidden) more line\(hidden == 1 ? "" : "s") — Expand")
+                        .font(Theme.Typography.meta)
+                        .foregroundStyle(Theme.Colors.link)
+                        .padding(.horizontal, Theme.Space.md)
+                        .padding(.vertical, Theme.Space.xs)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .frame(maxHeight: Theme.Layout.embeddedDiffMaxHeight)
     }
 }
 

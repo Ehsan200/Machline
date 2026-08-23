@@ -188,21 +188,63 @@ struct CenterStageView: View {
         }
     }
 
+    /// Shown when the centre has nothing to draw: no live agent and no replayed history.
+    ///
+    /// It used to read "Nothing selected — start a session, then pick an agent", which describes a
+    /// sequence the operator cannot perform: there is nothing to select here, and agents are not
+    /// picked but spawned by the session as it works. What is actually true depends on where the
+    /// session is, so the copy follows that — and in every case the way forward is the composer
+    /// directly below.
     private var emptyState: some View {
         VStack(spacing: Theme.Space.sm) {
             Spacer()
-            Image(systemName: "text.alignleft")
+            Image(systemName: emptyIcon)
                 .font(.system(size: 24))
                 .foregroundStyle(Theme.Colors.subtle)
-            Text("Nothing selected")
+            Text(emptyTitle)
                 .font(Theme.Typography.title)
                 .foregroundStyle(Theme.Colors.muted)
-            Text("Start a session, then pick an agent.")
+            Text(emptyDetail)
                 .font(Theme.Typography.meta)
                 .foregroundStyle(Theme.Colors.subtle)
+                .multilineTextAlignment(.center)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyIcon: String {
+        switch model.sessionState {
+        case .idle: return "text.alignleft"
+        case .starting, .running: return "ellipsis"
+        case .exited(let status): return status == 0 ? "checkmark.circle" : "exclamationmark.circle"
+        case .failed: return "exclamationmark.triangle"
+        }
+    }
+
+    private var emptyTitle: String {
+        switch model.sessionState {
+        case .idle: return "No session yet"
+        case .starting: return "Starting the session…"
+        case .running: return "Waiting for the first reply"
+        case .exited(let status): return status == 0 ? "Session ended" : "Session exited (\(status))"
+        case .failed: return "The session could not start"
+        }
+    }
+
+    private var emptyDetail: String {
+        switch model.sessionState {
+        case .idle:
+            return "Type below and press Return to start one. Earlier conversations are in the rail."
+        case .starting:
+            return "The gate comes up first, then the CLI."
+        case .running:
+            return "The session is up. Whatever it sends back lands here."
+        case .exited:
+            return "Type below to start another, or resume an earlier one from the rail."
+        case .failed(let message):
+            return message
+        }
     }
 }
 
@@ -349,6 +391,15 @@ struct TimelineView: View {
                     unseenCount += 1
                 }
             }
+            // Re-pin when the viewport itself changes size — a rail being dragged, the composer or
+            // the shell pane being resized, the window growing. Every one of those re-wraps the
+            // prose, so the content gets taller or shorter while the scroll offset stays exactly
+            // where it was, and the conversation appears to crawl up the screen under the pointer.
+            // Someone parked mid-history keeps their place; someone at the foot stays at the foot.
+            .onChange(of: viewport.size) {
+                guard isAtBottom else { return }
+                scrollToBottom(proxy, animated: false)
+            }
             .onAppear { scrollToBottom(proxy, animated: false) }
             .selectableTextTint()
         }
@@ -373,7 +424,10 @@ struct TimelineView: View {
             } else {
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
-            hasSettled = true
+            // Guarded because this runs on every frame of a rail drag: an unconditional write to
+            // `@State` re-runs the timeline's body each time, which is precisely the cost the
+            // re-pin exists to avoid paying twice.
+            if !hasSettled { hasSettled = true }
         }
     }
 
