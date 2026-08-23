@@ -29,10 +29,9 @@ struct ContentView: View {
             Theme.Colors.canvas.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                if let outcome = model.updates.outcome {
-                    updateBanner(outcome)
-                    Hairline()
-                }
+                // The update check's answer is *not* here. It hangs off the version badge in a
+                // popover — see `UpdateCard`. As a row in this column it moved every pane below it
+                // the moment an answer landed, which is a poor trade for a sentence.
 
                 // Always present: it carries the version badge and the new-tab control, so
                 // hiding it at one tab cost a whole row of chrome to show the same information.
@@ -141,127 +140,6 @@ struct ContentView: View {
         if let recorded = model.projectSessions.first(where: { $0.id == resumeSessionID }) {
             model.resume(recorded)
         }
-    }
-
-    /// The result of a manual update check.
-    ///
-    /// The check is asked for, but everything after it is not: a new release downloads on its own
-    /// and installs itself, and the banner is what makes that visible — and cancellable — while it
-    /// happens. Nothing is installed that has not matched the digest GitHub published.
-    @ViewBuilder
-    private func updateBanner(_ outcome: UpdateCheck.Outcome) -> some View {
-        HStack(spacing: Theme.Space.md) {
-            switch outcome {
-            case .available(let release):
-                Image(systemName: "arrow.down.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.Colors.accent)
-                Text("Machline \(release.version) is available — you have \(model.appVersion).")
-                    .font(Theme.Typography.control)
-                    .foregroundStyle(Theme.Colors.text)
-                Spacer(minLength: Theme.Space.md)
-                updateActions(for: release)
-
-            case .upToDate:
-                Image(systemName: "checkmark.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.Colors.success)
-                Text("Machline \(model.appVersion) is the latest release.")
-                    .font(Theme.Typography.control)
-                    .foregroundStyle(Theme.Colors.muted)
-                Spacer(minLength: Theme.Space.md)
-
-            case .unavailable(let reason):
-                Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.Colors.subtle)
-                Text(reason)
-                    .font(Theme.Typography.control)
-                    .foregroundStyle(Theme.Colors.subtle)
-                Spacer(minLength: Theme.Space.md)
-            }
-
-            IconButton(systemName: "xmark", help: "Dismiss") { model.updates.dismissNotice() }
-        }
-        .padding(.horizontal, Theme.Space.lg)
-        .padding(.vertical, Theme.Space.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Colors.panel)
-    }
-
-    /// The right-hand end of the update banner: fetch the build, watch it arrive, open it.
-    ///
-    /// A release published without a build attached still gets the page, because then the page is
-    /// genuinely the only thing there is.
-    @ViewBuilder
-    private func updateActions(for release: UpdateCheck.Release) -> some View {
-        switch model.updates.download {
-        case .running(let fraction):
-            HStack(spacing: Theme.Space.sm) {
-                ProgressView(value: fraction)
-                    .progressViewStyle(.linear)
-                    .frame(width: 130)
-                Text("\(Int((fraction * 100).rounded()))%")
-                    .font(Theme.Typography.monoMeta)
-                    .foregroundStyle(Theme.Colors.subtle)
-                    .monospacedDigit()
-                QuietButton(title: "Cancel") { model.updates.cancelDownload() }
-            }
-
-        case .finished(let file):
-            HStack(spacing: Theme.Space.sm) {
-                if model.updates.canInstall {
-                    // Only reached with a session mid-turn: the install is otherwise automatic.
-                    Text("Downloaded — installing quits this session.")
-                        .font(Theme.Typography.meta)
-                        .foregroundStyle(Theme.Colors.subtle)
-                    QuietButton(title: "Show in Finder") { model.updates.revealDownload() }
-                    QuietButton(title: "Install and Relaunch", role: .primary) {
-                        model.updates.install()
-                    }
-                } else {
-                    Text(file.lastPathComponent)
-                        .font(Theme.Typography.monoMeta)
-                        .foregroundStyle(Theme.Colors.subtle)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    QuietButton(title: "Show in Finder") { model.updates.revealDownload() }
-                    QuietButton(title: "Open", role: .primary) { model.updates.openDownload() }
-                }
-            }
-
-        case .installing:
-            Text("Installing \(release.version) — Machline will reopen.")
-                .font(Theme.Typography.meta)
-                .foregroundStyle(Theme.Colors.subtle)
-
-        case .failed(let message):
-            HStack(spacing: Theme.Space.sm) {
-                Text(message)
-                    .font(Theme.Typography.meta)
-                    .foregroundStyle(Theme.Colors.error)
-                    .lineLimit(2)
-                QuietButton(title: "Open release") { NSWorkspace.shared.open(release.url) }
-                QuietButton(title: "Retry", role: .primary) { model.updates.retryDownload() }
-            }
-
-        case .idle:
-            HStack(spacing: Theme.Space.sm) {
-                QuietButton(title: "Release notes") { NSWorkspace.shared.open(release.url) }
-                if let asset = release.asset {
-                    QuietButton(title: downloadTitle(for: asset), role: .primary) {
-                        model.updates.startDownload(release)
-                    }
-                }
-            }
-        }
-    }
-
-    /// The size is on the button because it is what decides whether now is a good moment.
-    private func downloadTitle(for asset: UpdateCheck.Asset) -> String {
-        guard asset.byteCount > 0 else { return "Download" }
-        let megabytes = Double(asset.byteCount) / 1_000_000
-        return String(format: "Download (%.1f MB)", megabytes)
     }
 
     /// A failed approval channel or an observed fail-open means commands may be running ungated.
