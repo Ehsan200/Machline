@@ -142,6 +142,15 @@ final class AppModel: Identifiable {
     var model: String?
     var promptDraft: String = ""
 
+    /// Pieces of the conversation pinned to the next message — chips above the composer, tagged
+    /// blocks in the prompt.
+    ///
+    /// Scoped like `promptDraft`, to this session tab, rather than to the selected agent. A
+    /// subagent has no input channel of its own, so a message composed while looking at one goes
+    /// to the parent regardless; dropping the operator's quotes for walking the tree would throw
+    /// away work to enforce a distinction the send path does not make.
+    private(set) var quotes: [QuotedSelection] = []
+
     /// The models offered in the composer's Model cell.
     ///
     /// The CLI takes an alias for the latest model in a family, or a full model name. Aliases are
@@ -320,6 +329,89 @@ final class AppModel: Identifiable {
     func dismissCompletions() {
         completions = []
         selectedCompletion = 0
+    }
+
+    // MARK: Quoting
+
+    /// Pins text to the next message.
+    ///
+    /// Quoting the same text from the same place twice is a second click on the same button, not a
+    /// second quote, so it is dropped rather than stacked.
+    func quote(_ text: String, from source: QuotedSelection.Source) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard !quotes.contains(where: { $0.text == trimmed && $0.source == source }) else { return }
+        quotes.append(QuotedSelection(text: trimmed, source: source))
+    }
+
+    func removeQuote(_ id: UUID) {
+        quotes.removeAll { $0.id == id }
+    }
+
+    func clearQuotes() {
+        quotes.removeAll()
+    }
+
+    /// Quotes whatever is selected anywhere in the window.
+    ///
+    /// The transcript is rendered as SwiftUI `Text` with `.textSelection(.enabled)`, which offers
+    /// the app no way to read a selection — no string, no range, not even whether one exists. What
+    /// it does offer is `copy:`, so the selection is taken through the pasteboard and the
+    /// pasteboard is then put back the way it was found. Copying is not what the operator asked
+    /// for, and losing what they had copied earlier to do it would be a theft of their clipboard.
+    ///
+    /// The alternative was rebuilding the timeline's prose on `NSTextView` for a real selection
+    /// API. That is the one surface whose frame rate is watched continuously, and this buys the
+    /// same result without touching it.
+    func quoteSelection() {
+        let board = NSPasteboard.general
+        let previous = board.string(forType: .string)
+        let mark = board.changeCount
+        guard NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) else { return }
+
+        // A turn later: the responder that handled `copy:` may finish writing after the send
+        // returns, and reading in the same pass would see the old contents.
+        Task { @MainActor in
+            guard board.changeCount != mark, let taken = board.string(forType: .string) else { return }
+            quote(taken, from: .selection)
+            board.clearContents()
+            if let previous { board.setString(previous, forType: .string) }
+        }
+    }
+
+    /// The message the agent actually receives: the pinned quotes, then what was typed.
+    ///
+    /// A quote past the inline limit is written to the attachment store and mentioned by path.
+    /// Pasting a thousand lines of output into the prompt spends the context window on text the
+    /// agent may only need to skim, and it can open the file if it needs the rest.
+    private func composedPrompt(typed: String) -> String {
+        guard !quotes.isEmpty else { return typed }
+
+        var spilled: [UUID: String] = [:]
+        let spillable = quotes.filter { QuotePrompt.needsSpill($0.text) }
+        if !spillable.isEmpty {
+            let store = AttachmentStore()
+            for quote in spillable {
+                guard let url = try? store.store(
+                    text: quote.text, named: Self.quoteFileName(for: quote))
+                else { continue }
+                spilled[quote.id] = url.path
+            }
+            store.prune()
+        }
+
+        return QuotePrompt.compose(quotes: quotes, spilled: spilled, typed: typed)
+    }
+
+    /// Named for what it holds, so a spilled quote is recognisable in the agent's reading list
+    /// rather than being one more opaque temporary file.
+    private static func quoteFileName(for quote: QuotedSelection) -> String {
+        switch quote.source {
+        case .file(let path, _), .patch(let path):
+            return "quoted-" + (path as NSString).lastPathComponent + ".txt"
+        default:
+            return "quoted-selection.txt"
+        }
     }
 
     /// Walks the project for `@` mentions. Off the main actor: a large tree takes a moment.
@@ -1334,11 +1426,15 @@ final class AppModel: Identifiable {
         // Starting a session was its own step, and pressing Return before it discarded what had
         // been typed. Typing is the intent; the session is plumbing. The draft is held and sent
         // the moment the session is up.
-        let text = promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typed = promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = composedPrompt(typed: typed)
         if !text.isEmpty {
             pendingPrompt = text
-            recordHistory(text)
+            // History is for retyping, so it holds what was typed rather than the quote blocks
+            // wrapped around it.
+            if !typed.isEmpty { recordHistory(typed) }
             promptDraft = ""
+            clearQuotes()
         }
         startSession()
     }
@@ -1362,10 +1458,13 @@ final class AppModel: Identifiable {
     }
 
     func sendPrompt() {
-        let text = promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let session else { return }
-        recordHistory(text)
+        let typed = promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Quotes alone are a message: pinning a stack trace and pressing Send is "look at this".
+        guard !typed.isEmpty || !quotes.isEmpty, let session else { return }
+        let text = composedPrompt(typed: typed)
+        if !typed.isEmpty { recordHistory(typed) }
         promptDraft = ""
+        clearQuotes()
         liveActivityAt = Date()
         Task { try? await session.send(steer: text) }
     }
@@ -1547,6 +1646,7 @@ extension AppModel {
     var canSubmit: Bool {
         guard workspace != nil else { return false }
         if sessionState.isRunning {
+            if !quotes.isEmpty { return true }
             return !promptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         // With nothing typed the button still starts an empty session, which is occasionally what

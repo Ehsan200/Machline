@@ -111,8 +111,8 @@ struct ReplayEntryView: View {
             }
 
         case .assistant(let text):
-            labelled("AGENT", strong: false) {
-                MarkdownView(markdown: text)
+            labelled("AGENT", strong: false, quoting: text) {
+                MarkdownView(markdown: text, model: model)
             }
 
         case .thinking(let text):
@@ -134,14 +134,25 @@ struct ReplayEntryView: View {
         }
     }
 
+    /// `quoting` is the text the label's quote control pins — absent for an entry there is no
+    /// point quoting, like the operator's own message.
     private func labelled(
-        _ label: String, strong: Bool, @ViewBuilder content: () -> some View
+        _ label: String, strong: Bool, quoting: String? = nil,
+        @ViewBuilder content: () -> some View
     ) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text(label)
-                .font(Theme.Typography.sectionLabel)
-                .tracking(0.8)
-                .foregroundStyle(Theme.Colors.muted)
+            HStack(spacing: Theme.Space.sm) {
+                Text(label)
+                    .font(Theme.Typography.sectionLabel)
+                    .tracking(0.8)
+                    .foregroundStyle(Theme.Colors.muted)
+                Spacer(minLength: 0)
+                if let quoting {
+                    QuoteButton(
+                        model: model, text: quoting, source: .reply,
+                        help: "Quote this reply in your next message")
+                }
+            }
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -206,6 +217,7 @@ struct ReplayResultView: View {
                 isExpanded: model.rowExpansionBinding(rowKey, whenUnset: isError))
 
             if isExpanded, !text.isEmpty {
+                QuoteOutputRow(model: model, text: text)
                 TerminalBlock(
                     command: nil,
                     stdout: isError ? "" : text,

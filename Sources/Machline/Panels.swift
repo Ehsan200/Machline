@@ -642,6 +642,9 @@ struct FileDiffModal: View {
             Spacer(minLength: Theme.Space.md)
 
             if let diff = model.diff(for: path), let patch = diff.fullPatch {
+                QuoteButton(
+                    model: model, text: patch, source: .patch(path: path),
+                    help: "Quote this patch in your next message")
                 CopyButton(text: patch, help: "Copy the patch")
             }
             QuietButton(title: "View file") {

@@ -125,7 +125,12 @@ struct FileViewer: View {
 
             Spacer(minLength: Theme.Space.md)
 
-            if let contents { CopyButton(text: contents, help: "Copy the file") }
+            if let contents {
+                QuoteButton(
+                    model: model, text: contents, source: .file(path: path, lines: nil),
+                    help: "Quote this file in your next message")
+                CopyButton(text: contents, help: "Copy the file")
+            }
             QuietButton(title: "Open externally") { model.openFile(path: path) }
             QuietButton(title: "Show in Finder") { model.revealInFinder(path: path) }
             IconButton(systemName: "xmark", help: "Close (esc)") { dismiss() }

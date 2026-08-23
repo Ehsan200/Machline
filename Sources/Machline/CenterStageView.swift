@@ -537,12 +537,20 @@ struct TimelineEventView: View {
     /// than as the answer.
     private func assistantMessage(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("AGENT")
-                .font(Theme.Typography.sectionLabel)
-                .tracking(0.8)
-                .foregroundStyle(Theme.Colors.muted)
+            HStack(spacing: Theme.Space.sm) {
+                Text("AGENT")
+                    .font(Theme.Typography.sectionLabel)
+                    .tracking(0.8)
+                    .foregroundStyle(Theme.Colors.muted)
+                Spacer(minLength: 0)
+                // The whole reply, for the common "about that answer —" follow-up. A part of it
+                // goes through the selection instead: ⌘⇧'.
+                QuoteButton(
+                    model: model, text: text, source: .reply,
+                    help: "Quote this reply in your next message")
+            }
 
-            MarkdownView(markdown: text)
+            MarkdownView(markdown: text, model: model)
         }
         .padding(.top, Theme.Space.xl)
         .padding(.bottom, Theme.Space.sm)
@@ -668,6 +676,7 @@ struct ToolResultRow: View {
                 isExpanded: model.rowExpansionBinding(rowKey, whenUnset: result.isError))
 
             if isExpanded {
+                QuoteOutputRow(model: model, text: quotableOutput)
                 ScrollView {
                     // stdout and stderr arrive pre-separated, so stderr can be styled distinctly
                     // without parsing concatenated output.
@@ -708,5 +717,14 @@ struct ToolResultRow: View {
     private var firstLine: String {
         let source = output.map { $0.stdout.isEmpty ? $0.stderr : $0.stdout } ?? result.text
         return source.split(separator: "\n").first.map(String.init) ?? ""
+    }
+
+    /// What a quote of this row carries: both streams in the order they are shown, so the quote
+    /// says the same thing the row does rather than dropping the half that explains it.
+    private var quotableOutput: String {
+        guard let output, !(output.stdout.isEmpty && output.stderr.isEmpty) else { return result.text }
+        return [output.stdout, output.stderr]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 }

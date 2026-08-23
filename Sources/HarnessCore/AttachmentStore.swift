@@ -71,6 +71,31 @@ public struct AttachmentStore: Sendable {
         return destination
     }
 
+    /// Writes text in and returns where it landed.
+    ///
+    /// The same slot-per-copy shape as `adopt`, for the text that has no file behind it: a quoted
+    /// selection too long to paste into the prompt is written here and mentioned by path instead.
+    public func store(text: String, named name: String) throws -> URL {
+        let manager = FileManager.default
+        let slot = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try manager.createDirectory(
+                at: slot, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
+        } catch {
+            throw Failure.copy(String(describing: error))
+        }
+
+        let destination = slot.appendingPathComponent(Self.mentionable(name))
+        do {
+            try text.write(to: destination, atomically: true, encoding: .utf8)
+        } catch {
+            try? manager.removeItem(at: slot)
+            throw Failure.copy(String(describing: error))
+        }
+        return destination
+    }
+
     /// `Screenshot 2026-08-22 at 9.45.42 PM.png` → `Screenshot-2026-08-22-at-9.45.42-PM.png`.
     static func mentionable(_ name: String) -> String {
         let folded = name.split(whereSeparator: \.isWhitespace).joined(separator: "-")

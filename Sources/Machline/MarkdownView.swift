@@ -224,6 +224,10 @@ extension MarkdownBlock {
 struct MarkdownView: View {
     let markdown: String
     var textColor: Color = Theme.Colors.text
+    /// Passed only where a quote makes sense — the timeline. Held as a plain reference rather than
+    /// `@Bindable`: nothing here reads a property off it, so nothing here should be rebuilt when
+    /// one changes. `nil` renders the same Markdown without the quote control.
+    var model: AppModel?
     /// Set for a reply that is still arriving. Each frame of one is a slightly longer prefix of
     /// the last and is never rendered twice, so nothing about it is worth caching — and caching it
     /// anyway evicts the finished replies that are.
@@ -236,7 +240,7 @@ struct MarkdownView: View {
                 case .prose(let blocks):
                     MarkdownProse(blocks: blocks, textColor: textColor, storing: !isStreaming)
                 case .code(let language, let text):
-                    CodeBlock(language: language, text: text)
+                    CodeBlock(language: language, text: text, model: model)
                 case .table(let header, let rows):
                     MarkdownTable(header: header, rows: rows)
                 }
@@ -469,6 +473,7 @@ struct MarkdownProse: View {
 struct CodeBlock: View {
     let language: String?
     let text: String
+    var model: AppModel?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -479,6 +484,11 @@ struct CodeBlock: View {
                         .foregroundStyle(Theme.Colors.subtle)
                 }
                 Spacer(minLength: 0)
+                if let model {
+                    QuoteButton(
+                        model: model, text: text, source: .code(language: language),
+                        help: "Quote this block in your next message")
+                }
                 CopyButton(text: text, help: "Copy this block")
             }
             .padding(.horizontal, Theme.Space.md)

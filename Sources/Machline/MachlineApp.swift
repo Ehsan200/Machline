@@ -53,6 +53,10 @@ struct MachlineApp: App {
             CommandGroup(after: .newItem) {
                 SessionTabCommands()
             }
+            // Quoting is a selection verb, so it belongs with the other ones.
+            CommandGroup(after: .pasteboard) {
+                QuoteCommands()
+            }
         }
     }
 }
