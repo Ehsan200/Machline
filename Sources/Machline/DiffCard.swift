@@ -128,6 +128,9 @@ extension String {
 struct DiffCard: View {
     let preview: EditPreview
     let onExpand: () -> Void
+    /// Opens the file itself. The change wanted after reading a diff is usually a line or two, and
+    /// this is where it was read.
+    let onEdit: () -> Void
 
     @State private var isCollapsed = false
     /// The card's inner width, which the rows cannot ask for themselves: inside a horizontal
@@ -181,6 +184,11 @@ struct DiffCard: View {
             DiffCounts(additions: preview.additions, deletions: preview.deletions)
 
             Button("Expand", action: onExpand)
+                .buttonStyle(.plain)
+                .font(Theme.Typography.meta)
+                .foregroundStyle(Theme.Colors.link)
+
+            Button("Edit", action: onEdit)
                 .buttonStyle(.plain)
                 .font(Theme.Typography.meta)
                 .foregroundStyle(Theme.Colors.link)

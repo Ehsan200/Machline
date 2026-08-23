@@ -440,7 +440,14 @@ struct ChangedFileRow: View {
 
                 Spacer(minLength: Theme.Space.sm)
 
-                if diff.isBinary {
+                // Swapped for the edit affordance under the pointer. The counts are what the row is
+                // scanned for at rest; the action is only wanted once a row has been singled out.
+                if isHovering, !diff.isBinary {
+                    Text("Edit")
+                        .font(Theme.Typography.monoMeta)
+                        .foregroundStyle(Theme.Colors.link)
+                        .onTapGesture { onView() }
+                } else if diff.isBinary {
                     Text("binary")
                         .font(Theme.Typography.monoMeta)
                         .foregroundStyle(Theme.Colors.subtle)
@@ -456,8 +463,9 @@ struct ChangedFileRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .help("Click to read the diff; Edit opens the file")
         .contextMenu {
-            Button("View file") { onView() }
+            Button("Edit file") { onView() }
             Button("Show diff") { onOpen() }
             Divider()
             Button("Show in Finder") { onReveal() }

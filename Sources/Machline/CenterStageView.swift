@@ -590,7 +590,10 @@ struct TimelineEventView: View {
 
         case .toolCall(let id, let use):
             if let edit = EditPreview(use: use) {
-                DiffCard(preview: edit) { model.openDiffModal(path: edit.path) }
+                DiffCard(
+                    preview: edit,
+                    onExpand: { model.openDiffModal(path: edit.path) },
+                    onEdit: { model.openViewer(path: edit.path) })
                     .padding(.top, Theme.Space.lg)
             } else {
                 ToolRow(model: model, rowKey: .live(id), use: use, result: nil)

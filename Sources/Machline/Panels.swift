@@ -726,7 +726,7 @@ struct FileDiffModal: View {
                     help: "Quote this patch in your next message")
                 CopyButton(text: patch, help: "Copy the patch")
             }
-            QuietButton(title: "View file") {
+            QuietButton(title: "Edit file") {
                 // Presenting while a dismissal is still in flight is dropped on the floor, so the
                 // model is asked to make the swap once this sheet has actually gone.
                 model.replaceDiffModalWithViewer(path: path)
@@ -755,7 +755,7 @@ struct FileDiffModal: View {
                 : "This file is outside the project, so it has no diff here.")
                 .font(Theme.Typography.control)
                 .foregroundStyle(Theme.Colors.subtle)
-            QuietButton(title: "View file") { model.replaceDiffModalWithViewer(path: path) }
+            QuietButton(title: "Edit file") { model.replaceDiffModalWithViewer(path: path) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
