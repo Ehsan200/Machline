@@ -118,6 +118,59 @@ struct SessionGroupingStabilityTests {
     }
 }
 
+/// A transcript is reread only when its child exits, so a months-old conversation that is being
+/// typed into right now would sit under "Older" while the operator watches it answer. Restamping
+/// the running session moves it to Today.
+struct LiveRestampTests {
+
+    private let calendar = Calendar(identifier: .gregorian)
+
+    private func session(_ date: Date) -> HistoricalSession {
+        HistoricalSession(
+            id: "live", fileURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
+            cwd: "/tmp", firstPrompt: "prompt", startedAt: date, lastActivityAt: date,
+            gitBranch: "main", cliVersion: "1.0", model: "opus", byteCount: 42)
+    }
+
+    @Test("A restamped session moves to today and keeps everything else")
+    func restampMovesToToday() {
+        let now = Date()
+        let old = calendar.date(byAdding: .day, value: -60, to: now)!
+        let recorded = session(old)
+        #expect(SessionAge.of(recorded.lastActivityAt, now: now, calendar: calendar) == .earlier)
+
+        let live = recorded.restamped(lastActivityAt: now)
+        #expect(SessionAge.of(live.lastActivityAt, now: now, calendar: calendar) == .today)
+        #expect(live.id == recorded.id)
+        #expect(live.fileURL == recorded.fileURL)
+        #expect(live.cwd == recorded.cwd)
+        #expect(live.firstPrompt == recorded.firstPrompt)
+        #expect(live.startedAt == recorded.startedAt)
+        #expect(live.gitBranch == recorded.gitBranch)
+        #expect(live.cliVersion == recorded.cliVersion)
+        #expect(live.model == recorded.model)
+        #expect(live.byteCount == recorded.byteCount)
+    }
+
+    /// The restamped copy is what the rail groups, so it must sort above conversations that were
+    /// genuinely active earlier today.
+    @Test("A restamped session sorts to the top of its group")
+    func restampSortsFirst() {
+        let now = Date()
+        let earlierToday = calendar.date(byAdding: .hour, value: -3, to: now)!
+        let other = HistoricalSession(
+            id: "other", fileURL: URL(fileURLWithPath: "/tmp/other.jsonl"),
+            cwd: "/tmp", firstPrompt: "other", startedAt: earlierToday,
+            lastActivityAt: earlierToday, gitBranch: nil, cliVersion: nil, model: nil, byteCount: 0)
+        let live = session(calendar.date(byAdding: .day, value: -60, to: now)!)
+            .restamped(lastActivityAt: now)
+
+        let groups = SessionGroup.group([other, live], now: now, calendar: calendar)
+        #expect(groups.map(\.age) == [.today])
+        #expect(groups[0].sessions.map(\.id) == ["live", "other"])
+    }
+}
+
 /// Opening a conversation makes the CLI append to its transcript immediately, so the file's
 /// modification date is not when the conversation last had a message in it. Using mtime meant that
 /// merely clicking a months-old session restamped it as "just now" and jumped it to the top of

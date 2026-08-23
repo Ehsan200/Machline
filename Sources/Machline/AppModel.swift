@@ -1020,7 +1020,23 @@ final class AppModel: Identifiable {
 
     /// Today's conversations, then yesterday's, then the rest. Only today's group opens by
     /// default — a rail listing two hundred rows hides the handful that matter.
-    var sessionGroups: [SessionGroup] { SessionGroup.group(projectSessions) }
+    ///
+    /// The running session is grouped by when it was last *typed into*, not by what its transcript
+    /// said when the rail was built: resuming an old conversation and sending a prompt puts it under
+    /// Today, where the operator just put it.
+    var sessionGroups: [SessionGroup] {
+        SessionGroup.group(projectSessions.map { session in
+            guard let liveActivityAt, isLive(session), session.lastActivityAt < liveActivityAt
+            else { return session }
+            return session.restamped(lastActivityAt: liveActivityAt)
+        })
+    }
+
+    /// When the running session last had a prompt sent to it from here.
+    ///
+    /// The transcript on disk is only reread when the child exits, so this is the only record of
+    /// activity in a session that is still going. `nil` until this window sends something.
+    private var liveActivityAt: Date?
 
     /// The conversation a commit draft should fork: the one running here, or failing that the
     /// project's most recently active one.
@@ -1245,6 +1261,9 @@ final class AppModel: Identifiable {
         selectedAgentID = nil
         lastTurn = nil
         cumulativeCostUSD = 0
+        // A session that has not been typed into yet is grouped by its transcript, not by the
+        // moment it was opened — see `sessionGroups`.
+        liveActivityAt = nil
         agentUpdatedAt = [:]
         lastTranscriptCount = [:]
         // Diagnostics describe a process. Carrying the last one's stderr into a restart makes the
@@ -1440,6 +1459,7 @@ final class AppModel: Identifiable {
     private func flushPendingPrompt() {
         guard let text = pendingPrompt, let session else { return }
         pendingPrompt = nil
+        liveActivityAt = Date()
         Task { try? await session.send(steer: text) }
     }
 
@@ -1455,6 +1475,7 @@ final class AppModel: Identifiable {
         guard !text.isEmpty, let session else { return }
         recordHistory(text)
         promptDraft = ""
+        liveActivityAt = Date()
         Task { try? await session.send(steer: text) }
     }
 

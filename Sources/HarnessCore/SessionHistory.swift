@@ -52,6 +52,25 @@ public struct HistoricalSession: Sendable, Hashable, Identifiable, Codable {
         "Caveat: The messages below were generated"
     ]
 
+    /// The same session, seen as having been active at `date`.
+    ///
+    /// For the conversation running right now: its transcript is reread only when the child exits,
+    /// so a months-old session that is being typed into would otherwise sit under "Older" until
+    /// then, while the operator is looking straight at it.
+    public func restamped(lastActivityAt date: Date) -> HistoricalSession {
+        HistoricalSession(
+            id: id,
+            fileURL: fileURL,
+            cwd: cwd,
+            firstPrompt: firstPrompt,
+            startedAt: startedAt,
+            lastActivityAt: date,
+            gitBranch: gitBranch,
+            cliVersion: cliVersion,
+            model: model,
+            byteCount: byteCount)
+    }
+
     /// A one-line title. Falls back to the session id, never to a fabricated summary.
     public var title: String {
         guard let firstPrompt, !firstPrompt.isEmpty else { return "Session \(id.prefix(8))" }
