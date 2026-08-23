@@ -29,7 +29,7 @@ struct ContentView: View {
             Theme.Colors.canvas.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                if let outcome = model.updateOutcome {
+                if let outcome = model.updates.outcome {
                     updateBanner(outcome)
                     Hairline()
                 }
@@ -181,7 +181,7 @@ struct ContentView: View {
                 Spacer(minLength: Theme.Space.md)
             }
 
-            IconButton(systemName: "xmark", help: "Dismiss") { model.dismissUpdateNotice() }
+            IconButton(systemName: "xmark", help: "Dismiss") { model.updates.dismissNotice() }
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.vertical, Theme.Space.sm)
@@ -195,7 +195,7 @@ struct ContentView: View {
     /// genuinely the only thing there is.
     @ViewBuilder
     private func updateActions(for release: UpdateCheck.Release) -> some View {
-        switch model.updateDownload {
+        switch model.updates.download {
         case .running(let fraction):
             HStack(spacing: Theme.Space.sm) {
                 ProgressView(value: fraction)
@@ -205,19 +205,19 @@ struct ContentView: View {
                     .font(Theme.Typography.monoMeta)
                     .foregroundStyle(Theme.Colors.subtle)
                     .monospacedDigit()
-                QuietButton(title: "Cancel") { model.cancelUpdateDownload() }
+                QuietButton(title: "Cancel") { model.updates.cancelDownload() }
             }
 
         case .finished(let file):
             HStack(spacing: Theme.Space.sm) {
-                if model.canInstallUpdate {
+                if model.updates.canInstall {
                     // Only reached with a session mid-turn: the install is otherwise automatic.
                     Text("Downloaded — installing quits this session.")
                         .font(Theme.Typography.meta)
                         .foregroundStyle(Theme.Colors.subtle)
-                    QuietButton(title: "Show in Finder") { model.revealDownloadedUpdate() }
+                    QuietButton(title: "Show in Finder") { model.updates.revealDownload() }
                     QuietButton(title: "Install and Relaunch", role: .primary) {
-                        model.installUpdate()
+                        model.updates.install()
                     }
                 } else {
                     Text(file.lastPathComponent)
@@ -225,8 +225,8 @@ struct ContentView: View {
                         .foregroundStyle(Theme.Colors.subtle)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    QuietButton(title: "Show in Finder") { model.revealDownloadedUpdate() }
-                    QuietButton(title: "Open", role: .primary) { model.openDownloadedUpdate() }
+                    QuietButton(title: "Show in Finder") { model.updates.revealDownload() }
+                    QuietButton(title: "Open", role: .primary) { model.updates.openDownload() }
                 }
             }
 
@@ -242,7 +242,7 @@ struct ContentView: View {
                     .foregroundStyle(Theme.Colors.error)
                     .lineLimit(2)
                 QuietButton(title: "Open release") { NSWorkspace.shared.open(release.url) }
-                QuietButton(title: "Retry", role: .primary) { model.retryUpdateDownload() }
+                QuietButton(title: "Retry", role: .primary) { model.updates.retryDownload() }
             }
 
         case .idle:
@@ -250,7 +250,7 @@ struct ContentView: View {
                 QuietButton(title: "Release notes") { NSWorkspace.shared.open(release.url) }
                 if let asset = release.asset {
                     QuietButton(title: downloadTitle(for: asset), role: .primary) {
-                        model.downloadUpdate(release)
+                        model.updates.startDownload(release)
                     }
                 }
             }

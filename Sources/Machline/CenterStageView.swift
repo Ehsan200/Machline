@@ -326,7 +326,7 @@ struct TimelineView: View {
                         resumeMarker
                     }
 
-                    ForEach(groupedEvents) { event in
+                    ForEach(model.timelineEvents) { event in
                         TimelineEventView(model: model, event: event)
                             .id(event.id)
                     }
@@ -339,7 +339,7 @@ struct TimelineView: View {
                                 .font(Theme.Typography.sectionLabel)
                                 .tracking(0.8)
                                 .foregroundStyle(Theme.Colors.muted)
-                            MarkdownView(markdown: agent.streamingText)
+                            MarkdownView(markdown: agent.streamingText, isStreaming: true)
                         }
                         .padding(.top, Theme.Space.xl)
                     }
@@ -444,28 +444,6 @@ struct TimelineView: View {
         .padding(.vertical, Theme.Space.xl)
     }
 
-    /// Assistant frames arrive one content block at a time under a shared message id, so
-    /// consecutive text blocks are folded into a single prose event rather than rendered as a run
-    /// of separate paragraphs.
-    private var groupedEvents: [TimelineEvent] {
-        guard let agent else { return [] }
-        var events: [TimelineEvent] = []
-        for entry in agent.transcript {
-            if case .text(let id, let messageID, let text) = entry {
-                if case .assistantText(_, let previousID, let existing)? = events.last?.kind,
-                   previousID == messageID {
-                    events.removeLast()
-                    events.append(TimelineEvent(
-                        id: id, kind: .assistantText(id, messageID, existing + text)))
-                    continue
-                }
-                events.append(TimelineEvent(id: id, kind: .assistantText(id, messageID, text)))
-                continue
-            }
-            events.append(TimelineEvent(id: entry.id, kind: .entry(entry)))
-        }
-        return events
-    }
 }
 
 /// Carries the foot of the timeline's position out of the scroll view.
@@ -474,16 +452,6 @@ private struct TimelineFootKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
-}
-
-struct TimelineEvent: Identifiable {
-    enum Kind {
-        case assistantText(UUID, String, String)
-        case entry(TranscriptEntry)
-    }
-
-    let id: UUID
-    let kind: Kind
 }
 
 struct TimelineEventView: View {

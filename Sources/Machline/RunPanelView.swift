@@ -474,20 +474,5 @@ struct ChangedFileRow: View {
     }
 }
 
-// MARK: - Formatting helpers
-
-extension Int {
-    /// `139900` → `139.9k`. Used wherever a token count would otherwise dominate a narrow row.
-    var abbreviated: String {
-        if self >= 1_000_000 { return String(format: "%.1fm", Double(self) / 1_000_000) }
-        if self >= 1_000 { return String(format: "%.1fk", Double(self) / 1_000) }
-        return "\(self)"
-    }
-
-    /// Milliseconds as a compact duration.
-    var durationLabel: String {
-        let seconds = self / 1000
-        if seconds < 60 { return "\(seconds)s" }
-        return "\(seconds / 60)m \(seconds % 60)s"
-    }
-}
+// `Int.abbreviated` and `Int.durationLabel` live in `HarnessCore` beside the accounting that uses
+// them, so both can be tested.

@@ -77,10 +77,10 @@ struct SessionTabStrip: View {
     /// string. Clicking it checks for a newer release.
     private var versionBadge: some View {
         Button {
-            model.checkForUpdates()
+            model.updates.check()
         } label: {
             HStack(spacing: Theme.Space.xs) {
-                if model.isCheckingForUpdates {
+                if model.updates.isChecking {
                     Spinner(size: 9, color: Theme.Colors.subtle)
                 } else if updateAvailable {
                     Image(systemName: "arrow.down.circle.fill")
@@ -102,7 +102,7 @@ struct SessionTabStrip: View {
     }
 
     private var updateAvailable: Bool {
-        if case .available = model.updateOutcome { return true }
+        if case .available = model.updates.outcome { return true }
         return false
     }
 }

@@ -189,7 +189,7 @@ struct UpdateCommand: View {
     @State private var scheduler = UpdateScheduler.shared
 
     var body: some View {
-        Button("Check for Updates…") { window?.current.checkForUpdates() }
+        Button("Check for Updates…") { window?.current.updates.check() }
             .disabled(window == nil)
 
         // The daily check is the app talking to GitHub without being asked, so the switch for it

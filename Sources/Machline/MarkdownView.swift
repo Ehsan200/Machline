@@ -5,7 +5,7 @@ import SwiftUI
 /// `AttributedString(markdown:)` alone is not enough: it handles inline spans but flattens block
 /// structure, so headings, lists, fenced code, and tables come out as one paragraph with the
 /// syntax still visible. So blocks are parsed here and inline spans are handed to Foundation.
-enum MarkdownBlock: Identifiable, Hashable {
+enum MarkdownBlock: Hashable {
     case heading(level: Int, text: String)
     case paragraph(String)
     case bullets([String])
@@ -14,8 +14,6 @@ enum MarkdownBlock: Identifiable, Hashable {
     case quote(String)
     case rule
     case table(header: [String], rows: [[String]])
-
-    var id: Int { hashValue }
 }
 
 enum MarkdownParser {
@@ -24,21 +22,33 @@ enum MarkdownParser {
     ///
     /// SwiftUI rebuilds a view's body on any observable change, so an uncached parse runs for every
     /// message on every frame — and while a reply streams, that is dozens of times a second over
-    /// text that grows each time. `NSCache` evicts under memory pressure on its own.
-    @MainActor private static let cache = NSCache<NSString, BlockBox>()
+    /// text that grows each time.
+    @MainActor private static let cache: NSCache<NSString, BlockBox> = {
+        let cache = NSCache<NSString, BlockBox>()
+        // `NSCache` evicts on memory pressure, which is a warning the system raises late and a
+        // long-lived window would rather not wait for. Held to a few megabytes of source instead.
+        cache.totalCostLimit = 8 * 1024 * 1024
+        return cache
+    }()
 
     @MainActor private final class BlockBox {
         let blocks: [MarkdownBlock]
         init(_ blocks: [MarkdownBlock]) { self.blocks = blocks }
     }
 
+    /// Parses `markdown`, reusing an earlier parse of the same source.
+    ///
+    /// `storing` is false for text that is still being streamed. Every frame of a reply is a
+    /// slightly longer prefix of the last, so each is a distinct key that will never be asked for
+    /// again — caching them filled the cache with hundreds of dead prefixes of a message whose
+    /// final form is the only one worth keeping.
     @MainActor
-    static func cachedBlocks(in markdown: String) -> [MarkdownBlock] {
+    static func cachedBlocks(in markdown: String, storing: Bool = true) -> [MarkdownBlock] {
         let key = markdown as NSString
         if let hit = cache.object(forKey: key) { return hit.blocks }
         let parsed = blocks(in: markdown)
         // Cost is the source length, so one enormous reply cannot hold the whole cache hostage.
-        cache.setObject(BlockBox(parsed), forKey: key, cost: markdown.utf8.count)
+        if storing { cache.setObject(BlockBox(parsed), forKey: key, cost: markdown.utf8.count) }
         return parsed
     }
 
@@ -214,13 +224,17 @@ extension MarkdownBlock {
 struct MarkdownView: View {
     let markdown: String
     var textColor: Color = Theme.Colors.text
+    /// Set for a reply that is still arriving. Each frame of one is a slightly longer prefix of
+    /// the last and is never rendered twice, so nothing about it is worth caching — and caching it
+    /// anyway evicts the finished replies that are.
+    var isStreaming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             ForEach(runs) { run in
                 switch run.kind {
                 case .prose(let blocks):
-                    MarkdownProse(blocks: blocks, textColor: textColor)
+                    MarkdownProse(blocks: blocks, textColor: textColor, storing: !isStreaming)
                 case .code(let language, let text):
                     CodeBlock(language: language, text: text)
                 case .table(let header, let rows):
@@ -239,7 +253,6 @@ struct MarkdownView: View {
     private var runs: [MarkdownRun] {
         var runs: [MarkdownRun] = []
         var prose: [MarkdownBlock] = []
-        _ = textColor
 
         func flush() {
             guard !prose.isEmpty else { return }
@@ -247,7 +260,7 @@ struct MarkdownView: View {
             prose.removeAll()
         }
 
-        for block in MarkdownParser.cachedBlocks(in: markdown) {
+        for block in MarkdownParser.cachedBlocks(in: markdown, storing: !isStreaming) {
             if block.isProse {
                 prose.append(block)
                 continue
@@ -302,13 +315,18 @@ enum ProseCache {
     private static var storage: [Key: AttributedString] = [:]
     private static var insertionOrder: [Key] = []
 
+    /// `storing` is false for a reply that is still arriving: each frame of one is a distinct key
+    /// that will never be looked up again, so storing them walks the whole window's worth of
+    /// finished replies out of a 400-entry cache over the course of a single long message.
     static func attributed(
-        for blocks: [MarkdownBlock], color: Color, build: () -> AttributedString
+        for blocks: [MarkdownBlock], color: Color, storing: Bool = true,
+        build: () -> AttributedString
     ) -> AttributedString {
         let key = Key(blocks: blocks, color: color)
         if let hit = storage[key] { return hit }
 
         let made = build()
+        guard storing else { return made }
         storage[key] = made
         insertionOrder.append(key)
         if insertionOrder.count > limit {
@@ -327,9 +345,10 @@ enum ProseCache {
 struct MarkdownProse: View {
     let blocks: [MarkdownBlock]
     let textColor: Color
+    var storing = true
 
     var body: some View {
-        Text(ProseCache.attributed(for: blocks, color: textColor) { build() })
+        Text(ProseCache.attributed(for: blocks, color: textColor, storing: storing) { build() })
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

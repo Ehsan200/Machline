@@ -514,7 +514,13 @@ final class MCPPanelModel {
     ///
     /// `system/init` is re-emitted whenever the tool set changes, so this replaces the drawer
     /// rather than merging into it.
+    ///
+    /// Guarded on the handshake actually differing: this is called from every snapshot refresh,
+    /// so during a stream it was rebuilding the whole drawer a dozen times a second and assigning
+    /// it — which invalidates the MCP panel — to say the same thing each time.
     func update(capabilities: SessionInit) {
+        guard capabilities != lastCapabilities else { return }
+        lastCapabilities = capabilities
         drawer = MCPToolDrawer(capabilities: capabilities, policy: policy)
     }
 
@@ -529,12 +535,11 @@ final class MCPPanelModel {
         }
     }
 
-    private var lastCapabilities: SessionInit?
-
-    func remember(capabilities: SessionInit) {
-        lastCapabilities = capabilities
-        update(capabilities: capabilities)
-    }
+    /// The handshake the drawer was last built from, so `toggle` can rebuild it against the same
+    /// tool set. `update` is what fills this: the separate `remember` that used to do it had no
+    /// callers, which left this nil for the whole session — and so left `toggle` changing the
+    /// policy without ever rebuilding the drawer that displays it.
+    @ObservationIgnored private var lastCapabilities: SessionInit?
 
     /// Starts the traffic inspector. Observability only — if it fails, sessions still run and only
     /// inspection is lost.

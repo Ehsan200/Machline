@@ -90,7 +90,7 @@ final class UpdateScheduler {
         // Recorded before the check rather than after it: a check that fails should not have the
         // app retrying every wake-up for the rest of the day.
         defaults.set(Date(), forKey: Self.lastCheckKey)
-        model.checkForUpdates()
+        model.updates.check()
     }
 
     private struct WeakModel {

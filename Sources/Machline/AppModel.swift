@@ -27,6 +27,9 @@ final class AppModel: Identifiable {
     /// command list, the approval mode, the recent projects — was simply missing everywhere else.
     init() {
         loadPersistedSettings()
+        // Installing an update means quitting, which on top of a running agent throws away the
+        // turn it was mid-way through. The update model asks before it takes that decision itself.
+        updates.isHostBusy = { [weak self] in self?.sessionState.isRunning ?? false }
         // Somewhere for an automatic check to land. Held weakly there, so this does not outlive
         // the window it belongs to.
         UpdateScheduler.shared.register(self)
@@ -470,221 +473,17 @@ final class AppModel: Identifiable {
 
     /// The changed file whose complete diff is open, if any.
     var diffModalPath: DiffTarget?
+
     // MARK: Updates
 
-    private(set) var updateOutcome: UpdateCheck.Outcome?
-    private(set) var isCheckingForUpdates = false
+    /// Checking for a new build, fetching it, installing it. Its own model — see `UpdateModel`.
+    let updates = UpdateModel()
 
-    /// This build's version, as stamped by the release workflow.
-    var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
-    }
+    /// This build's version, as stamped by the release workflow. Forwarded because it is the app's
+    /// identity rather than update state: `/status` and the tab strip both want it.
+    var appVersion: String { UpdateModel.appVersion }
 
-    private var updateRepository: String? {
-        Bundle.main.object(forInfoDictionaryKey: "MachlineUpdateRepository") as? String
-    }
-
-    /// Asks GitHub whether there is a newer release.
-    ///
-    /// This is the app's single outbound network request. It runs when asked — the menu item, the
-    /// version badge — and, unless the operator turns that off, once a day on its own; the daily
-    /// one comes through here rather than through a path of its own, so an unattended answer can
-    /// install nothing an asked-for one would not. See `UpdateScheduler` for when it fires.
-    func checkForUpdates() {
-        guard !isCheckingForUpdates else { return }
-        // A transfer belongs to the offer that started it. Re-checking mid-download would replace
-        // that offer underneath it and take its Cancel button off the banner, leaving a transfer
-        // running with nothing able to stop it; the badge waits instead.
-        if case .running = updateDownload { return }
-        // A finished or failed transfer belonged to the previous answer, so the new one starts clean.
-        updateDownload = .idle
-        isCheckingForUpdates = true
-        let check = UpdateCheck(repository: updateRepository, currentVersion: appVersion)
-        Task {
-            let outcome = await check.run()
-            await MainActor.run {
-                self.updateOutcome = outcome
-                self.isCheckingForUpdates = false
-                // The answer to "is there a new version" is only ever followed by "then get it",
-                // so the transfer starts itself. Nothing is replaced until it has arrived and
-                // matched its digest, and the banner can still cancel it.
-                if case .available(let release) = outcome, release.asset != nil {
-                    self.downloadUpdate(release)
-                }
-            }
-        }
-    }
-
-    func dismissUpdateNotice() {
-        updateOutcome = nil
-        cancelUpdateDownload()
-        updateDownload = .idle
-    }
-
-    // MARK: Downloading a release
-
-    /// Where the new build has got to.
-    ///
-    /// Downloading it here rather than in a browser is the whole point: the operator asked for an
-    /// update, and being handed a web page instead is an errand. `finished` is the same errand one
-    /// step later, so it is only where a build stops when the app cannot replace itself — see
-    /// `UpdateInstaller`.
-    enum UpdateDownload: Equatable {
-        case idle
-        case running(Double)
-        case finished(URL)
-        /// The swap script is running and the app is quitting; it comes back on the new version.
-        case installing
-        case failed(String)
-    }
-
-    private(set) var updateDownload: UpdateDownload = .idle
-    private var updateDownloadTask: Task<Void, Never>?
-
-    /// The release currently on offer, when it has a build attached to download.
-    var downloadableRelease: UpdateCheck.Release? {
-        guard case .available(let release) = updateOutcome, release.asset != nil else { return nil }
-        return release
-    }
-
-    func downloadUpdate(_ release: UpdateCheck.Release) {
-        guard let asset = release.asset else { return }
-        guard updateDownloadTask == nil else { return }
-
-        updateDownload = .running(0)
-        // Progress arrives on whatever thread the transfer is running on, so it is funnelled
-        // through a stream and applied here. The newest value is the only one worth keeping — a
-        // buffer of stale percentages would just animate the bar through the past.
-        let (progress, publish) = AsyncStream<Double>.makeStream(bufferingPolicy: .bufferingNewest(1))
-
-        updateDownloadTask = Task { [weak self] in
-            let reader = Task { @MainActor [weak self] in
-                for await fraction in progress {
-                    guard let self, case .running = self.updateDownload else { continue }
-                    self.updateDownload = .running(fraction)
-                }
-            }
-            defer { reader.cancel() }
-
-            let download = ReleaseDownload(asset: asset)
-            do {
-                let file = try await download.run { publish.yield($0) }
-                publish.finish()
-                await MainActor.run {
-                    self?.updateDownload = .finished(file)
-                    self?.updateDownloadTask = nil
-                    self?.installUpdateIfUnattended()
-                }
-            } catch {
-                publish.finish()
-                let message = Self.describe(downloadError: error)
-                await MainActor.run {
-                    // A cancelled download is not a failure to report; it is what was asked for.
-                    self?.updateDownload = Task.isCancelled ? .idle : .failed(message)
-                    self?.updateDownloadTask = nil
-                }
-            }
-        }
-    }
-
-    func cancelUpdateDownload() {
-        updateDownloadTask?.cancel()
-        updateDownloadTask = nil
-        if case .running = updateDownload { updateDownload = .idle }
-    }
-
-    /// Retry is a fresh attempt, not a resumed one: the partial file was already discarded.
-    func retryUpdateDownload() {
-        guard let release = downloadableRelease else { return }
-        updateDownload = .idle
-        downloadUpdate(release)
-    }
-
-    func revealDownloadedUpdate() {
-        guard case .finished(let file) = updateDownload else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([file])
-    }
-
-    /// Opens the disk image, for the build that cannot replace itself — the operator drags it over.
-    func openDownloadedUpdate() {
-        guard case .finished(let file) = updateDownload else { return }
-        NSWorkspace.shared.open(file)
-    }
-
-    // MARK: Installing it
-
-    /// Whether this build is running from a bundle it can replace.
-    ///
-    /// False under `swift run` and for a bare binary, where there is no `.app` to swap and the
-    /// download is only ever something to hand over.
-    var canInstallUpdate: Bool { UpdateInstaller.isInstallable }
-
-    /// Installs as soon as the download lands, unless a session is mid-turn.
-    ///
-    /// Installing means quitting, and quitting on top of a running agent throws away the turn it
-    /// was in the middle of. So the automatic path is for an idle app; a busy one holds the build
-    /// and puts the decision on the banner, where the operator can see what it costs.
-    private func installUpdateIfUnattended() {
-        guard canInstallUpdate, !sessionState.isRunning else { return }
-        installUpdate()
-    }
-
-    /// Replaces this bundle with the downloaded build and relaunches.
-    ///
-    /// The swap itself happens after this process exits — see `UpdateInstaller` — so the quit is
-    /// part of the operation rather than something that follows it. A build that cannot replace
-    /// itself falls back to opening the disk image.
-    func installUpdate() {
-        guard case .finished(let file) = updateDownload else { return }
-        guard let installer = try? UpdateInstaller() else {
-            openDownloadedUpdate()
-            return
-        }
-
-        do {
-            try installer.install(from: file)
-        } catch {
-            updateDownload = .failed(Self.describe(installError: error))
-            return
-        }
-
-        updateDownload = .installing
-        // The script is already counting this process down, so nothing may delay the quit — a
-        // confirmation sheet here would be a dialog the update is waiting on.
-        NSApplication.shared.terminate(nil)
-    }
-
-    private static func describe(installError error: Error) -> String {
-        guard let failure = error as? UpdateInstaller.Failure else {
-            return "The update could not be installed."
-        }
-        switch failure {
-        case .notBundled:
-            return "This build is not running from an app bundle, so it cannot replace itself."
-        case .unpack(let message):
-            return "Could not open the downloaded build: \(message)"
-        case .noApplication(let message):
-            return message
-        case .launch(let message):
-            return "Could not start the installer: \(message)"
-        }
-    }
-
-    private static func describe(downloadError error: Error) -> String {
-        guard let failure = error as? ReleaseDownload.Failure else {
-            return "The download did not finish."
-        }
-        switch failure {
-        case .http(let status):
-            return "GitHub answered \(status) for the download."
-        case .unreachable:
-            return "Could not reach GitHub to download the release."
-        case .digestMismatch:
-            return "The download did not match the checksum GitHub published, so it was discarded."
-        case .write(let message):
-            return "Could not save the download: \(message)"
-        }
-    }
+    // MARK: Shell pane
 
     /// Whether the shell pane is showing.
     var isTerminalVisible = false
@@ -801,14 +600,40 @@ final class AppModel: Identifiable {
     private(set) var busySince: Date?
     /// Coalesces streaming updates. Partial-message frames arrive dozens per second; rebuilding
     /// the snapshot for each would spend the whole main thread on layout.
-    private var lastStreamingRefresh = Date.distantPast
+    @ObservationIgnored private var lastStreamingRefresh = Date.distantPast
+    /// How long a streaming burst is allowed to coalesce for.
+    private static let streamingInterval: TimeInterval = 0.08
+    /// Set when a streaming update was throttled away, cleared by the refresh that renders it.
+    @ObservationIgnored private var streamingDirty = false
+    /// The timer that renders a throttled burst's tail once its window closes.
+    @ObservationIgnored private var streamingFlush: Task<Void, Never>?
+
+    /// Serialises snapshot refreshes. Reading the snapshot suspends on the session actor, and
+    /// Swift actors are reentrant and not FIFO: two refreshes in flight can resume in either
+    /// order and write a stale snapshot over a fresh one, which reads on screen as the transcript
+    /// stepping backwards a frame. One runs at a time; whatever arrives meanwhile is coalesced
+    /// into a single follow-up pass instead of queueing a task per frame.
+    @ObservationIgnored private var graphRefreshInFlight = false
+    @ObservationIgnored private var graphRefreshPending = false
+    /// Whether the coalesced work includes something structural, which also costs a `git status`.
+    @ObservationIgnored private var graphRefreshNeedsGit = false
+
+    // The memos below are filled from view bodies. `@Observable` treats a plain stored property as
+    // observable state, so writing one mid-body is a change made during a view update: SwiftUI
+    // invalidates, re-runs the body, fills the memo again, and the window never settles. They are
+    // caches, not state — nothing should redraw because one was populated.
 
     /// Memoised `sessionChanges`, invalidated by the Git panel's revision counter.
+    @ObservationIgnored
     private var changesCache: (revision: Int, diffs: [GitFileDiff], statuses: [String: GitFileStatus])?
 
+    /// Memoised `timelineEvents`, invalidated by the transcript's revision counter.
+    @ObservationIgnored
+    private var timelineCache: (revision: Int, agentID: String?, events: [TimelineEvent])?
+
     /// When each agent last produced a transcript entry, for the relative time in the rail.
-    private var agentUpdatedAt: [String: Date] = [:]
-    private var lastTranscriptCount: [String: Int] = [:]
+    @ObservationIgnored private var agentUpdatedAt: [String: Date] = [:]
+    @ObservationIgnored private var lastTranscriptCount: [String: Int] = [:]
 
     // MARK: Diagnostics
 
@@ -1362,32 +1187,21 @@ final class AppModel: Identifiable {
                 return false
             }
             if isStreamingOnly {
-                guard Date().timeIntervalSince(lastStreamingRefresh) > 0.08 else { return }
-                lastStreamingRefresh = Date()
-            }
-
-            Task { [weak self] in
-                guard let self, let session = self.session else { return }
-                let snapshot = await session.graph
-                self.graph = snapshot
-                self.transcriptRevision &+= 1
-                self.recordActivity(in: snapshot)
-                self.recordBusyState(in: snapshot)
-                if self.selectedAgentID == nil { self.selectedAgentID = snapshot.root?.id }
-                if let capabilities = snapshot.root?.capabilities {
-                    self.mcp.update(capabilities: capabilities)
-                    self.rememberSlashCommands(capabilities.slashCommands)
+                let sinceLast = Date().timeIntervalSince(lastStreamingRefresh)
+                guard sinceLast >= Self.streamingInterval else {
+                    // Throttled, but not discarded. Dropping an update outright loses whichever
+                    // one happens to land inside the window — and the last chunk of a reply
+                    // almost always does, because the burst stops there. That left the closing
+                    // words of a message unrendered until some later frame happened to arrive.
+                    streamingDirty = true
+                    scheduleStreamingFlush(after: Self.streamingInterval - sinceLast)
+                    return
                 }
-                self.failOpenIncidents = snapshot.nodes.values
-                    .filter(\.hasFailOpenIncident)
-                    .map { "Agent \($0.title) ran a command without approval." }
-
-                // The working tree is being changed *during* a turn, not at the end of one.
-                // Waiting for `turnCompleted` meant the Changes list and the Git workbench sat
-                // stale for minutes while files moved underneath them. `refresh()` coalesces, so
-                // a burst of edits still costs one `git status`.
-                if !isStreamingOnly { self.git?.refresh() }
+                lastStreamingRefresh = Date()
+                streamingDirty = false
             }
+
+            requestGraphRefresh(includingGit: !isStreamingOnly)
 
         case .approvalPending(let pending):
             pendingApprovals.append(pending)
@@ -1423,6 +1237,78 @@ final class AppModel: Identifiable {
             // The CLI has finished writing its transcript, so the list can pick up this session.
             refreshHistory()
         }
+    }
+
+    /// Renders a throttled burst's tail once its window closes.
+    ///
+    /// One timer at a time: every further update inside the window only re-raises the dirty flag,
+    /// so a burst schedules one flush rather than one per frame.
+    private func scheduleStreamingFlush(after delay: TimeInterval) {
+        guard streamingFlush == nil else { return }
+        streamingFlush = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self else { return }
+            self.streamingFlush = nil
+            // A live update may have beaten the timer to it, in which case the tail is on screen
+            // already and this pass has nothing to add.
+            guard !Task.isCancelled, self.streamingDirty else { return }
+            self.streamingDirty = false
+            self.lastStreamingRefresh = Date()
+            self.requestGraphRefresh(includingGit: false)
+        }
+    }
+
+    /// Asks for the session's snapshot to be republished, coalescing with any refresh already
+    /// running rather than racing it. See `graphRefreshInFlight`.
+    private func requestGraphRefresh(includingGit: Bool) {
+        graphRefreshNeedsGit = graphRefreshNeedsGit || includingGit
+        guard !graphRefreshInFlight else {
+            graphRefreshPending = true
+            return
+        }
+        graphRefreshInFlight = true
+        Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                self.graphRefreshPending = false
+                await self.refreshGraph()
+            } while self.graphRefreshPending
+            self.graphRefreshInFlight = false
+        }
+    }
+
+    /// Republishes everything derived from the session's snapshot.
+    private func refreshGraph() async {
+        guard let session else { return }
+        let snapshot = await session.graph
+        let wantsGit = graphRefreshNeedsGit
+        graphRefreshNeedsGit = false
+
+        graph = snapshot
+        transcriptRevision &+= 1
+        recordActivity(in: snapshot)
+        recordBusyState(in: snapshot)
+        if selectedAgentID == nil { selectedAgentID = snapshot.root?.id }
+        if let capabilities = snapshot.root?.capabilities {
+            mcp.update(capabilities: capabilities)
+            rememberSlashCommands(capabilities.slashCommands)
+        }
+
+        // Sorted because `nodes` is a dictionary: unordered, this reshuffles the incident banner
+        // between frames and never compares equal to the list it just replaced.
+        let incidents = snapshot.nodes.values
+            .filter(\.hasFailOpenIncident)
+            .sorted { $0.id < $1.id }
+            .map { "Agent \($0.title) ran a command without approval." }
+        // Assigning an equal array still invalidates every view observing it, and this is
+        // recomputed on every frame of a stream while being empty in almost every session.
+        if incidents != failOpenIncidents { failOpenIncidents = incidents }
+
+        // The working tree is being changed *during* a turn, not at the end of one. Waiting for
+        // `turnCompleted` meant the Changes list and the Git workbench sat stale for minutes while
+        // files moved underneath them. `refresh()` coalesces, so a burst of edits still costs one
+        // `git status`.
+        if wantsGit { git?.refresh() }
     }
 
     // MARK: - Actions
@@ -1608,6 +1494,25 @@ final class AppModel: Identifiable {
 
 extension AppModel {
 
+    // MARK: Timeline
+
+    /// The selected agent's transcript, folded into the rows the timeline draws.
+    ///
+    /// Memoised on the transcript revision, which is bumped by exactly the refresh that can change
+    /// a transcript. Without the memo this ran from the timeline's body — an O(transcript) walk
+    /// with a string concatenation per multi-block reply, re-run on every body pass, which during a
+    /// stream is a dozen a second and during a scroll is once per preference change.
+    var timelineEvents: [TimelineEvent] {
+        let agent = selectedAgent
+        if let timelineCache, timelineCache.revision == transcriptRevision,
+           timelineCache.agentID == agent?.id {
+            return timelineCache.events
+        }
+        let events = agent.map { TimelineFold.events(in: $0.transcript) } ?? []
+        timelineCache = (transcriptRevision, agent?.id, events)
+        return events
+    }
+
     // MARK: Rail
 
     var canStartSession: Bool { workspace != nil && !sessionState.isRunning }
@@ -1733,26 +1638,19 @@ extension AppModel {
     var tokensSpentLabel: String { tokensSpent.abbreviated }
 
     var contextFraction: Double {
-        guard contextWindow > 0 else { return 0 }
-        return min(1, Double(contextUsed) / Double(contextWindow))
+        UsageAccounting.fraction(used: contextUsed, window: contextWindow)
     }
 
     var contextUsedLabel: String { "\(contextUsed.abbreviated) / \(contextWindow.abbreviated)" }
 
     var contextRemainingLabel: String {
-        max(0, contextWindow - contextUsed).abbreviated
+        UsageAccounting.remaining(used: contextUsed, window: contextWindow).abbreviated
     }
 
     /// True once a turn has completed here and actually reported a cost.
     var hasRecordedCost: Bool { cumulativeCostUSD > 0 }
 
-    var costLabel: String {
-        guard hasRecordedCost else { return "—" }
-        // Under a cent is still spend; rounding it to $0.00 reads as nothing happening.
-        return cumulativeCostUSD < 0.01
-            ? String(format: "$%.4f", cumulativeCostUSD)
-            : String(format: "$%.2f", cumulativeCostUSD)
-    }
+    var costLabel: String { UsageAccounting.costLabel(forUSD: cumulativeCostUSD) }
 
     /// Cost arrives on a `result` frame and transcripts do not record those, so a resumed
     /// conversation genuinely has no earlier figure to show — only what it spends from here.
@@ -1763,27 +1661,8 @@ extension AppModel {
                 + " so a resumed conversation counts only from now."
     }
 
-    struct UsageRow { let label: String; let value: String }
-
-    var usageDetails: [UsageRow] {
-        guard let usage = lastTurn?.usage else {
-            return [UsageRow(label: "No turn has completed yet.", value: "")]
-        }
-        var rows: [UsageRow] = []
-        func add(_ label: String, _ key: String) {
-            if let value = usage[key]?.intValue {
-                rows.append(UsageRow(label: label, value: value.abbreviated))
-            }
-        }
-        add("Input", "input_tokens")
-        add("Output", "output_tokens")
-        add("Cache write", "cache_creation_input_tokens")
-        add("Cache read", "cache_read_input_tokens")
-        if let turns = lastTurn?.numTurns {
-            rows.append(UsageRow(label: "Turns", value: "\(turns)"))
-        }
-        rows.append(UsageRow(label: "Spent this session", value: tokensSpentLabel))
-        return rows
+    var usageDetails: [UsageAccounting.Row] {
+        UsageAccounting.rows(usage: lastTurn?.usage, turns: lastTurn?.numTurns, spent: tokensSpent)
     }
 
     // MARK: Changes
