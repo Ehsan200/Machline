@@ -224,8 +224,13 @@ final class AppModel: Identifiable {
                     kind: .slashCommand, insert: "/\($0.rawValue)",
                     label: "/\($0.rawValue)", detail: $0.summary) }
 
+            // A name Machline owns is answered here and never reaches the CLI, so the CLI's own
+            // entry for it is dropped rather than listed alongside — `/context`, `/agents`,
+            // `/mcp` and several more appear in both sets, and offering both put the same command
+            // in the list twice with only one of them doing anything.
+            let owned = Set(LocalCommand.allCases.map(\.rawValue))
             completions = local + CompletionMatcher
-                .rank(slashCommands, query: trigger.query)
+                .rank(slashCommands.filter { !owned.contains($0) }, query: trigger.query)
                 .map { Completion(kind: .slashCommand, insert: "/\($0)", label: "/\($0)") }
         case .file:
             completions = CompletionMatcher
@@ -1363,6 +1368,28 @@ final class AppModel: Identifiable {
         promptDraft = ""
         liveActivityAt = Date()
         Task { try? await session.send(steer: text) }
+    }
+
+    /// Empties the conversation on both sides of the process boundary. `/clear`.
+    ///
+    /// `clear` is one of the CLI's own slash commands, so before this it was forwarded like any
+    /// other prompt: the CLI dropped the context it was carrying and said nothing this app could
+    /// act on, which left every message still on screen over a conversation that no longer
+    /// existed. It is intercepted now — the timeline is emptied here, and `AgentSession.clear()`
+    /// still sends `/clear` on, so the agent forgets what the screen has just stopped showing.
+    func clearConversation() {
+        // Replayed history is part of the conversation being cleared, not a record of it.
+        replay = []
+        recordedUsage = nil
+        // Every key refers to a row that no longer exists, replayed or live.
+        rowExpansion = [:]
+        diffModalPath = nil
+        transcriptRevision &+= 1
+
+        // With no session there is nothing carrying context, and clearing the screen is the whole
+        // of the job.
+        guard let session else { return }
+        Task { try? await session.clear() }
     }
 
     func interrupt() {

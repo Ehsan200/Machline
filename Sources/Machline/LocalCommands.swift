@@ -21,6 +21,7 @@ enum LocalCommand: String, CaseIterable, Identifiable {
     case tools
     case export
     case memory
+    case clear
 
     /// What the completion list shows for it.
     var summary: String {
@@ -36,6 +37,7 @@ enum LocalCommand: String, CaseIterable, Identifiable {
         case .tools: return "tools the session negotiated"
         case .export: return "write the transcript to a file"
         case .memory: return "open this project's CLAUDE.md"
+        case .clear: return "empty the conversation, here and in the CLI"
         }
     }
 
@@ -54,7 +56,7 @@ enum LocalCommand: String, CaseIterable, Identifiable {
         case .status, .help, .skills, .agents, .tools, .mcp: return .report
         case .context, .cost: return .panel(.context)
         case .permissions: return .panel(.approvals)
-        case .export, .memory: return .action
+        case .export, .memory, .clear: return .action
         }
     }
 
@@ -272,6 +274,7 @@ extension AppModel {
             switch command {
             case .export: exportTranscript()
             case .memory: openProjectMemory()
+            case .clear: clearConversation()
             default: break
             }
         }

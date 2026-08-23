@@ -6,6 +6,9 @@ public enum GraphChange: Sendable, Equatable {
     case nodeAdded(id: String)
     case stateChanged(id: String, from: AgentState, to: AgentState)
     case transcriptAppended(id: String, entryID: UUID)
+    /// The agent's transcript was emptied by `/clear`. Structural rather than streaming, so it is
+    /// never coalesced away: the one frame that must land is the one that empties the screen.
+    case transcriptCleared(id: String)
     case telemetryUpdated(id: String)
     case capabilitiesUpdated(id: String)
     case failOpenIncident(id: String, toolName: String)
@@ -211,6 +214,31 @@ public struct AgentGraph: Sendable {
         var changes: [GraphChange] = []
         for id in nodes.keys where nodes[id]?.state.isTerminal == false {
             transition(id, to: .cancelled, changes: &changes)
+        }
+        return changes
+    }
+
+    /// Empties every agent's transcript, for `/clear`.
+    ///
+    /// The tree, its capabilities, and what the session has spent all survive: `/clear` resets the
+    /// conversation the agent is carrying, not the session that is carrying it. Spend already
+    /// billed stays billed, and the agents are still there to talk to.
+    ///
+    /// `contextTokens` is the exception among the telemetry. It is the occupancy of the window,
+    /// and after a clear the window is empty — leaving the last turn's figure standing would show
+    /// a full ring over an empty conversation until the next turn happened to correct it.
+    @discardableResult
+    public mutating func clearTranscripts() -> [GraphChange] {
+        var changes: [GraphChange] = []
+        for id in nodes.keys {
+            guard var node = nodes[id] else { continue }
+            guard !node.transcript.isEmpty || !node.streamingText.isEmpty
+                || node.telemetry.contextTokens != nil else { continue }
+            node.transcript.removeAll()
+            node.streamingText = ""
+            node.telemetry.contextTokens = nil
+            nodes[id] = node
+            changes.append(.transcriptCleared(id: id))
         }
         return changes
     }

@@ -100,6 +100,16 @@ public actor AgentSession {
         emit(.graphChanged(graph.noteSteerQueued(text: text)))
     }
 
+    /// Sends `/clear` and empties the transcripts it resets.
+    ///
+    /// Both halves, in that order. The CLI owns the context the agent is carrying and this app
+    /// owns what is on screen; clearing only one leaves the other lying about the conversation —
+    /// a cleared screen over an agent that still remembers everything is the worse of the two.
+    public func clear() async throws {
+        try await supervisor.send(userMessage: "/clear")
+        emit(.graphChanged(graph.clearTranscripts()))
+    }
+
     /// Stops the agent's current work immediately. Distinct from steering.
     public func interrupt() async {
         await supervisor.interrupt()
