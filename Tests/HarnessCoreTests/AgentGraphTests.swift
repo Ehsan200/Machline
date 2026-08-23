@@ -311,6 +311,56 @@ struct AgentGraphTests {
         #expect(root.transcript.count == 1, "The queued entry is replaced, not duplicated")
     }
 
+    /// Probe-verified against the real CLI: a message written to stdin mid-turn and followed by
+    /// `SIGINT` is discarded, and no echo for it ever arrives. Left queued, it was counted as
+    /// pending work by the composer for the rest of the session — "3 queued" over an empty box.
+    @Test("An interrupt retires the steers it threw away")
+    func interruptDropsQueuedSteers() throws {
+        var graph = AgentGraph()
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"status","status":"requesting","session_id":"s","uuid":"u1"}"#))
+        graph.noteSteerQueued(text: "Try the other target.")
+
+        let changes = graph.noteInterrupted()
+        #expect(!changes.isEmpty)
+
+        let root = try #require(graph.root)
+        #expect(!root.transcript.contains { if case .steerQueued = $0 { return true } else { return false } })
+        #expect(root.transcript.contains {
+            if case .steerDropped(_, let text) = $0 { return text == "Try the other target." }
+            return false
+        })
+        #expect(root.transcript.count == 1, "The queued entry is replaced, not duplicated")
+    }
+
+    @Test("A stopped session retires what it never read")
+    func stopDropsQueuedSteers() throws {
+        var graph = AgentGraph()
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"status","status":"requesting","session_id":"s","uuid":"u1"}"#))
+        graph.noteSteerQueued(text: "Never read.")
+        graph.noteCancelled()
+
+        let root = try #require(graph.root)
+        #expect(root.transcript.contains { if case .steerDropped = $0 { return true } else { return false } })
+    }
+
+    /// A delivered steer is history, not pending work: an interrupt must not rewrite it.
+    @Test("An interrupt leaves delivered steers alone")
+    func interruptSparesDeliveredSteers() throws {
+        var graph = AgentGraph()
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"status","status":"requesting","session_id":"s","uuid":"u1"}"#))
+        graph.noteSteerQueued(text: "Landed.")
+        graph.apply(frame: try Self.frame(
+            #"{"type":"user","session_id":"s","uuid":"u2","message":{"role":"user","content":[{"type":"text","text":"Landed."}]}}"#))
+        graph.noteInterrupted()
+
+        let root = try #require(graph.root)
+        #expect(root.transcript.contains { if case .steerDelivered = $0 { return true } else { return false } })
+        #expect(!root.transcript.contains { if case .steerDropped = $0 { return true } else { return false } })
+    }
+
     /// The prompt that starts a session is written before the CLI has emitted anything, so there is
     /// no root to hang it on yet. Dropped, the opening message of every session existed only in the
     /// echo — and an echo carrying an image never arrives as one.
@@ -373,6 +423,60 @@ struct AgentGraphTests {
             #"{"type":"system","subtype":"status","status":"requesting","session_id":"s","uuid":"u9"}"#))
         #expect(changes.allSatisfy { if case .stateChanged = $0 { return false } else { return true } })
         #expect(graph.root?.state == .completed)
+    }
+
+    /// A `result` frame is a turn boundary. A turn that fails leaves the CLI running and ready for
+    /// the next message, so the root must be able to go back to work — it sat on "Failed" for the
+    /// rest of the session while the operator steered it and watched it answer.
+    @Test("A failed turn does not end the root agent")
+    func failedTurnIsRecoverable() throws {
+        var graph = try Self.graph(replaying: .plainTurn)
+        let rootID = try #require(graph.rootID)
+
+        graph.apply(frame: try Self.frame(
+            #"{"type":"result","is_error":true,"result":"Turn failed","session_id":"s","uuid":"u1"}"#))
+        #expect(graph.root?.state == .errored("Turn failed"))
+
+        // The next thing the agent does puts it back to work.
+        graph.apply(frame: try Self.frame(
+            #"{"type":"assistant","session_id":"s","uuid":"u2","message":{"id":"m1","role":"assistant","content":[{"type":"thinking","thinking":"Carrying on."}]}}"#))
+        #expect(graph.node(id: rootID)?.state == .thinking)
+
+        graph.apply(frame: try Self.frame(
+            #"{"type":"result","is_error":false,"session_id":"s","uuid":"u3"}"#))
+        #expect(graph.node(id: rootID)?.state == .idle)
+    }
+
+    /// The same forgiveness must not reach a subagent: its node ends when its task ends.
+    @Test("A finished subagent stays finished")
+    func subagentStaysFinished() throws {
+        var graph = try Self.graph(replaying: .subagent)
+        let root = try #require(graph.root)
+        let child = try #require(graph.children(of: root.id).first)
+        #expect(child.state == .completed)
+        guard case .subagent(_, let toolUseID, _) = child.kind else {
+            Issue.record("Expected a subagent node")
+            return
+        }
+
+        graph.apply(frame: try Self.frame(
+            """
+            {"type":"assistant","session_id":"s","uuid":"u2","parent_tool_use_id":"\(toolUseID)",\
+            "message":{"id":"m2","role":"assistant","content":[{"type":"thinking","thinking":"Late."}]}}
+            """))
+        #expect(graph.node(id: child.id)?.state == .completed)
+    }
+
+    /// Once the session is over the root is finished like anything else.
+    @Test("A stopped session does not reopen its root")
+    func stoppedSessionStaysStopped() throws {
+        var graph = try Self.graph(replaying: .plainTurn)
+        graph.noteCancelled()
+        #expect(graph.root?.state == .cancelled)
+
+        graph.apply(frame: try Self.frame(
+            #"{"type":"assistant","session_id":"s","uuid":"u2","message":{"id":"m1","role":"assistant","content":[{"type":"thinking","thinking":"Too late."}]}}"#))
+        #expect(graph.root?.state == .cancelled)
     }
 
     @Test("A non-zero exit marks the session errored")

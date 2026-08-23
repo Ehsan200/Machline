@@ -46,6 +46,11 @@ public struct AgentGraph: Sendable {
     /// the most recent ones left it out. See `reconcileAbandonedTasks`.
     private var backgroundSnapshots = 0
     private var absentSnapshots: [String: Int] = [:]
+    /// Set once the session itself has ended — the process exited, or the operator stopped it.
+    ///
+    /// Until then the root agent is still there to be talked to, whatever its last turn did. See
+    /// `transition`.
+    private var isSessionOver = false
     private var idGenerator: @Sendable () -> UUID
 
     /// - Parameter idGenerator: overridable so tests can assert on stable transcript ids.
@@ -263,11 +268,43 @@ public struct AgentGraph: Sendable {
         return true
     }
 
+    /// Retires the steers an interrupt threw away.
+    ///
+    /// Interrupting does not just stop the turn: anything written to stdin behind it is discarded
+    /// with it, and the CLI never echoes those messages. Nothing on the frame stream retires them,
+    /// so without this they stayed "queued" for the rest of the session — the composer counted work
+    /// as pending that no agent would ever read, and the timeline promised delivery "at the next
+    /// turn boundary" that had already come and gone.
+    ///
+    /// The text is kept rather than the row removed: it is what the operator wrote, and the honest
+    /// answer is that it was dropped, not that it never happened.
+    @discardableResult
+    public mutating func noteInterrupted() -> [GraphChange] {
+        var changes: [GraphChange] = []
+        dropQueuedSteers(changes: &changes)
+        return changes
+    }
+
+    /// Turns every steer still waiting into one that was never delivered. Sorted so the changes come
+    /// out in a stable order rather than the dictionary's.
+    private mutating func dropQueuedSteers(changes: inout [GraphChange]) {
+        for (id, node) in nodes.sorted(by: { $0.key < $1.key }) {
+            for (index, entry) in node.transcript.enumerated() {
+                guard case .steerQueued(let entryID, let text) = entry else { continue }
+                nodes[id]?.transcript[index] = .steerDropped(id: entryID, text: text)
+                changes.append(.transcriptAppended(id: id, entryID: entryID))
+            }
+        }
+    }
+
     // MARK: - Session lifecycle
 
     @discardableResult
     public mutating func noteSessionExit(status: Int32) -> [GraphChange] {
         var changes: [GraphChange] = []
+        isSessionOver = true
+        // Nothing is going to read what was still waiting on stdin.
+        dropQueuedSteers(changes: &changes)
         for id in nodes.keys where nodes[id]?.state.isTerminal == false {
             transition(
                 id,
@@ -280,6 +317,8 @@ public struct AgentGraph: Sendable {
     @discardableResult
     public mutating func noteCancelled() -> [GraphChange] {
         var changes: [GraphChange] = []
+        isSessionOver = true
+        dropQueuedSteers(changes: &changes)
         for id in nodes.keys where nodes[id]?.state.isTerminal == false {
             transition(id, to: .cancelled, changes: &changes)
         }
@@ -380,7 +419,7 @@ public struct AgentGraph: Sendable {
             case .thinking(let text, _):
                 append(.thinking(id: idGenerator(), messageID: message.id, text: text),
                        to: ownerID, changes: &changes)
-                if nodes[ownerID]?.state.isTerminal == false {
+                if isWorkable(ownerID) {
                     transition(ownerID, to: .thinking, changes: &changes)
                 }
 
@@ -440,7 +479,7 @@ public struct AgentGraph: Sendable {
                 changes.append(.telemetryUpdated(id: target))
             }
             // A subagent launch returns immediately; its node reports its own completion.
-            if nodes[target]?.state.isTerminal == false {
+            if isWorkable(target) {
                 transition(target, to: .thinking, changes: &changes)
             }
         }
@@ -464,7 +503,9 @@ public struct AgentGraph: Sendable {
         // goes idle and stays available for the next message.
         if turnResult.isError {
             transition(ownerID, to: .errored(turnResult.text ?? "Turn failed"), changes: &changes)
-        } else if node.state.isTerminal == false {
+        } else if isWorkable(ownerID) {
+            // A good turn after a failed one clears the failure: the root is idle and waiting, which
+            // is what the composer is offering to do next.
             transition(ownerID, to: .idle, changes: &changes)
         }
     }
@@ -537,9 +578,29 @@ public struct AgentGraph: Sendable {
     ) {
         guard let current = nodes[id]?.state, current != state else { return }
         // Terminal states are final; late frames must not resurrect a finished agent.
-        guard !current.isTerminal else { return }
+        guard !current.isTerminal || canReopen(id) else { return }
         nodes[id]?.state = state
         changes.append(.stateChanged(id: id, from: current, to: state))
+    }
+
+    /// Whether an agent already in a terminal state may be put back to work.
+    ///
+    /// Only the root, and only while the session is still up. A `result` frame is a *turn* boundary,
+    /// not the end of the session (docs/RUNTIME.md): a turn that fails — a refusal, a tool the model
+    /// gave up on, an interrupt — leaves the CLI running and ready for the next message. Reading
+    /// that outcome as the end of the agent meant one failed turn pinned the root on "Failed" for
+    /// the rest of the session, while the operator went on steering it and watching it work.
+    ///
+    /// A subagent is the opposite case and keeps the old rule: its node ends when its task ends, and
+    /// a late frame must not resurrect it.
+    private func canReopen(_ id: String) -> Bool {
+        !isSessionOver && nodes[id]?.isRoot == true
+    }
+
+    /// Whether an agent can be moved on by an arriving frame: either it never finished, or it is the
+    /// root of a session that is still up.
+    private func isWorkable(_ id: String) -> Bool {
+        nodes[id]?.state.isTerminal == false || canReopen(id)
     }
 
     private mutating func append(

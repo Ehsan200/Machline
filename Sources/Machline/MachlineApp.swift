@@ -88,6 +88,7 @@ private struct NewWindowButtons: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
+        Self.raiseDescriptorLimit()
         // Belt and braces behind the per-descriptor `SO_NOSIGPIPE`/`F_SETNOSIGPIPE` calls: this
         // app writes to two things that can hang up under it — the agent's stdin and an approval
         // helper's socket — and the default disposition of `SIGPIPE` is to kill the process. A
@@ -98,6 +99,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Waits for a window to exist before it asks anything — see `UpdateScheduler.checkIfDue`.
         UpdateScheduler.shared.start()
+    }
+
+    /// Takes the descriptor limit off `launchd`'s floor.
+    ///
+    /// An app launched from Finder inherits `launchctl limit maxfiles`, which is **256** soft on a
+    /// stock machine — a terminal gets a shell's raised limit instead, which is why none of this
+    /// shows up in development. This app is a process farm: every session holds three pipes plus an
+    /// approval socket for as long as its tab exists, the shell pane holds a pty, and every `git`
+    /// call takes four more for the length of the call. A window of tabs reaches 256.
+    ///
+    /// The failure it causes is not a legible "too many open files" anywhere. `Pipe()` cannot
+    /// report a failure — it has no throwing initialiser — so it hands back an unopened descriptor,
+    /// and the next `posix_spawn` on it fails with `EBADF`: the Git panel says
+    /// `launchFailed("… Code=9 \"Bad file descriptor\"")` for a commit that had nothing wrong with
+    /// it. Raising the ceiling is the fix; 10 240 is what `setrlimit` will accept for descriptors on
+    /// macOS however unlimited the hard limit claims to be.
+    private static func raiseDescriptorLimit() {
+        var limits = rlimit()
+        guard getrlimit(RLIMIT_NOFILE, &limits) == 0 else { return }
+        let wanted = min(rlim_t(10_240), limits.rlim_max)
+        guard limits.rlim_cur < wanted else { return }
+        limits.rlim_cur = wanted
+        setrlimit(RLIMIT_NOFILE, &limits)
     }
 }
 

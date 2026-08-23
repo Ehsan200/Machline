@@ -54,6 +54,18 @@ final class AppModel: Identifiable {
     private(set) var sessionState: SessionState = .idle
     private(set) var transcriptRevision = 0
 
+    /// Whether this session's timeline is pinned to the foot, and how much has landed since it
+    /// stopped being.
+    ///
+    /// Per tab rather than per view. A window draws every tab through one `CenterStageView` with the
+    /// model swapped underneath, so SwiftUI keeps the same view — and any `@State` on it — across a
+    /// tab change: the follow flag, the unseen count and the scroll offset all belonged to whichever
+    /// tab was last in front. Switching to a session that was sitting at the end of its output left
+    /// the timeline parked at the offset of the one before it, which on a shorter conversation is
+    /// blank canvas. Held here, each session answers for itself and the view re-pins on the change.
+    var isTimelineAtFoot = true
+    var unseenTimelineEvents = 0
+
     enum SessionState: Equatable {
         case idle
         case starting

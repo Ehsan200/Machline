@@ -54,6 +54,26 @@ enum Theme {
         static let backdrop = Color(hex: 0x000000, opacity: 0.70)
     }
 
+    /// Source code, coloured the way every other editor colours it.
+    ///
+    /// Its own group rather than reused interface colours. The two answer different questions: a
+    /// keyword is not an error and a type is not a warning, and drawing them from `Colors` would
+    /// tie a retune of the alert palette to the appearance of every file in the app. It would also
+    /// have to be argued back from first principles each time, when the answer is already settled —
+    /// these are Gruvbox's own syntax assignments, which is what makes a Swift file here look like
+    /// the same Swift file anywhere else.
+    ///
+    /// Same upstream set as `Colors`, so this adds one value the interface never needed: the purple
+    /// that Gruvbox gives to literals.
+    enum Syntax {
+        static let comment = Color(hex: 0x928374)
+        static let string = Color(hex: 0xB8BB26)
+        static let keyword = Color(hex: 0xFB4934)
+        static let type = Color(hex: 0xFABD2F)
+        static let number = Color(hex: 0xD3869B)
+        static let plain = Color(hex: 0xD5C4A1)
+    }
+
     // MARK: - Spacing
 
     /// Base unit is 4pt; every gap in the interface is one of these steps.
@@ -147,6 +167,8 @@ enum Theme {
         static let mono = Fonts.mono(size: 12.5)
         static let monoSmall = Fonts.mono(size: 11.5)
         static let monoMeta = Fonts.mono(size: 11)
+        /// Line numbers: a step below the code they sit beside, so they read as margin.
+        static let gutter = Fonts.mono(size: 10.5)
         static let monoStrong = Fonts.mono(size: 12.5, weight: .medium)
     }
 }

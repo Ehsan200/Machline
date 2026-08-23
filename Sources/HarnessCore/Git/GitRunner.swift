@@ -55,7 +55,7 @@ public struct GitRunner: Sendable {
         do {
             try process.run()
         } catch {
-            throw Failure.launchFailed(String(describing: error))
+            throw Failure.launchFailed(Self.describe(launchFailure: error))
         }
 
         if let input, let stdinPipe = process.standardInput as? Pipe {
@@ -86,6 +86,21 @@ public struct GitRunner: Sendable {
                 standardError: output.standardError)
         }
         return output
+    }
+
+    /// Says what a failed spawn actually means.
+    ///
+    /// `posix_spawn` reports descriptor exhaustion as `EBADF` here rather than `EMFILE`: `Pipe()`
+    /// has no way to report that it could not open, so the process is launched against a descriptor
+    /// that was never created. Raw, that reached the Git panel as
+    /// `launchFailed("… Code=9 \"Bad file descriptor\"")` over a commit that was perfectly good.
+    private static func describe(launchFailure error: Error) -> String {
+        let posix = (error as NSError)
+        guard posix.domain == NSPOSIXErrorDomain,
+              posix.code == Int(EBADF) || posix.code == Int(EMFILE) || posix.code == Int(ENFILE)
+        else { return String(describing: error) }
+        return "the app has run out of file descriptors, so `git` could not be started. "
+            + "Closing finished session tabs frees them. (\(String(describing: error)))"
     }
 
     /// The repository root, or `nil` when the working directory is not inside one.

@@ -169,6 +169,38 @@ public actor SessionSupervisor {
         process.terminate()
     }
 
+    /// The descriptors this supervisor is holding, in creation order.
+    ///
+    /// Internal for the test that proves `releaseDescriptors` gives them back: `FileHandle` will not
+    /// answer for a descriptor it has already closed, so the numbers have to be read while they are
+    /// still live.
+    var heldDescriptors: [Int32] {
+        [
+            stdinPipe.fileHandleForWriting.fileDescriptor,
+            stdoutPipe.fileHandleForReading.fileDescriptor,
+            stderrPipe.fileHandleForReading.fileDescriptor
+        ]
+    }
+
+    /// Lets go of the child's pipes once it has exited.
+    ///
+    /// A finished session stays on screen — its tab, its transcript, its tree are all still worth
+    /// reading — so the supervisor outlives its process by hours, and until it is deallocated it
+    /// holds three descriptors: the write end of stdin and the read ends of stdout and stderr.
+    /// Against `launchd`'s 256-descriptor floor (see `AppDelegate.raiseDescriptorLimit`) a window's
+    /// worth of finished tabs was enough to matter, and running out surfaces as an unrelated
+    /// `EBADF` on the next subprocess anything in the app tries to spawn.
+    ///
+    /// Guarded on the process: called against a live session this would cut its own frame stream.
+    public func releaseDescriptors() {
+        guard !process.isRunning else { return }
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+        try? stdinPipe.fileHandleForWriting.close()
+        try? stdoutPipe.fileHandleForReading.close()
+        try? stderrPipe.fileHandleForReading.close()
+    }
+
     // MARK: - Helpers
 
     /// Locates the agent binary.

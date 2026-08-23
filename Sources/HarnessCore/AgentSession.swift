@@ -111,7 +111,11 @@ public actor AgentSession {
     }
 
     /// Stops the agent's current work immediately. Distinct from steering.
+    ///
+    /// Whatever was queued behind the running turn dies with it — the CLI discards stdin it has not
+    /// consumed and never echoes it — so the tree is told before the process is.
     public func interrupt() async {
+        emit(.graphChanged(graph.noteInterrupted()))
         await supervisor.interrupt()
     }
 
@@ -181,6 +185,9 @@ public actor AgentSession {
     private func finish() async {
         isRunning = false
         await broker.stop()
+        // The frame stream has ended, so the child is gone and its pipes are only descriptors this
+        // process is sitting on. A tab keeps its session object for as long as it is open.
+        await supervisor.releaseDescriptors()
         for pump in pumps { pump.cancel() }
         pumps.removeAll()
         continuation?.finish()

@@ -299,9 +299,20 @@ struct TimelineView: View {
     /// It is deliberately *not* the same question as "is the foot on screen right now". Every
     /// arriving frame pushes the foot below the viewport for a moment, and reading the two as the
     /// same thing meant the first streamed token turned following off and left it off.
-    @State private var isFollowing = true
-    /// How many events have landed since they scrolled away from the foot.
-    @State private var unseenCount = 0
+    ///
+    /// Kept on the model, not in `@State`: this view is reused across tab changes, so a flag held
+    /// here would be the previous tab's answer. See `AppModel.isTimelineAtFoot`.
+    private var isFollowing: Bool {
+        get { model.isTimelineAtFoot }
+        nonmutating set { model.isTimelineAtFoot = newValue }
+    }
+
+    /// How many events have landed since they scrolled away from the foot. Per tab, for the same
+    /// reason as `isFollowing`.
+    private var unseenCount: Int {
+        get { model.unseenTimelineEvents }
+        nonmutating set { model.unseenTimelineEvents = newValue }
+    }
 
     /// The foot is treated as reached within this many points, so a resting scroll that stops a
     /// hair short still counts as being at the end.
@@ -471,12 +482,28 @@ struct TimelineView: View {
                 guard isFollowing else { return }
                 scrollToBottom(proxy, animated: false)
             }
+            // Changing tab, or picking another agent in the rail, swaps the whole conversation under
+            // a view SwiftUI keeps, so nothing else here fires: no `onAppear`, no replay count
+            // change, no revision bump. The scroll offset stayed where the last conversation left
+            // it, which against a shorter one is past the end of the content — the timeline came up
+            // as empty canvas. The foot is where the work is, and it is the only position worth
+            // restoring: an offset carried over from another conversation means nothing in this one.
+            .onChange(of: conversation) {
+                hasSettled = false
+                unseenCount = 0
+                isFollowing = true
+                scrollToBottom(proxy, animated: false)
+            }
             .onAppear { scrollToBottom(proxy, animated: false) }
             .selectableTextTint()
         }
     }
 
     private static let scrollSpace = "timeline.scroll"
+
+    /// What is being read: which session, and which agent inside it. The two things that replace the
+    /// timeline's contents wholesale without the view being rebuilt.
+    private var conversation: String { "\(model.id)/\(model.selectedAgentID ?? "-")" }
 
     /// Decides, from one measurement to the next, whether the timeline should still be following
     /// the foot of the conversation.
@@ -551,8 +578,9 @@ struct TimelineEventView: View {
     @ViewBuilder
     private func entryView(_ entry: TranscriptEntry) -> some View {
         switch entry {
-        case .steerDelivered(_, let text), .steerQueued(_, let text):
-            userMessage(text, isQueued: isQueued(entry))
+        case .steerDelivered(_, let text), .steerQueued(_, let text),
+             .steerDropped(_, let text):
+            userMessage(text, status: status(of: entry))
 
         case .text:
             EmptyView()  // Folded into `assistantText` upstream.
@@ -580,26 +608,46 @@ struct TimelineEventView: View {
         }
     }
 
-    private func isQueued(_ entry: TranscriptEntry) -> Bool {
-        if case .steerQueued = entry { return true }
-        return false
+    /// What became of a message the operator wrote: nothing to say once it landed, a promise while
+    /// it waits, and an apology when the interrupt took it with the turn.
+    private enum MessageStatus {
+        case delivered
+        case queued
+        case dropped
+
+        var caption: String? {
+            switch self {
+            case .delivered: return nil
+            case .queued: return "queued · delivered at the next turn boundary"
+            case .dropped: return "not delivered · the run was interrupted"
+            }
+        }
+    }
+
+    private func status(of entry: TranscriptEntry) -> MessageStatus {
+        switch entry {
+        case .steerQueued: return .queued
+        case .steerDropped: return .dropped
+        default: return .delivered
+        }
     }
 
     // MARK: Events
 
     /// The strongest non-semantic surface in the timeline. Full width, squared, labelled — this
     /// initiated the work; it is not casual chat.
-    private func userMessage(_ text: String, isQueued: Bool) -> some View {
+    private func userMessage(_ text: String, status: MessageStatus) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(spacing: Theme.Space.sm) {
                 Text("YOU")
                     .font(Theme.Typography.sectionLabel)
                     .tracking(0.8)
                     .foregroundStyle(Theme.Colors.muted)
-                if isQueued {
-                    Text("queued · delivered at the next turn boundary")
+                if let caption = status.caption {
+                    Text(caption)
                         .font(Theme.Typography.meta)
-                        .foregroundStyle(Theme.Colors.warning)
+                        .foregroundStyle(
+                            status == .dropped ? Theme.Colors.subtle : Theme.Colors.warning)
                 }
                 Spacer(minLength: 0)
             }
@@ -608,7 +656,7 @@ struct TimelineEventView: View {
         }
         .padding(Theme.Space.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Colors.surface.opacity(isQueued ? 0.5 : 1))
+        .background(Theme.Colors.surface.opacity(status == .delivered ? 1 : 0.5))
         .clipShape(RoundedRectangle(cornerRadius: Theme.Layout.radius))
         .padding(.top, Theme.Space.xxl)
         .padding(.bottom, Theme.Space.md)

@@ -53,6 +53,12 @@ public enum TranscriptEntry: Sendable, Equatable, Identifiable {
     case steerQueued(id: UUID, text: String)
     /// The same steer, once the `--replay-user-messages` echo confirmed consumption.
     case steerDelivered(id: UUID, text: String)
+    /// A steer the agent will never consume, because the run it was queued behind was interrupted.
+    ///
+    /// Probe-verified: a message written to stdin mid-turn and followed by `SIGINT` is discarded by
+    /// the CLI. It never echoes, so nothing in the frame stream retires it — the row sat on "queued"
+    /// for the rest of the session and the composer went on counting it as pending work.
+    case steerDropped(id: UUID, text: String)
     case turnEnded(id: UUID, result: TurnResult)
     /// Operator-facing annotation raised by the harness itself, not the agent.
     case incident(id: UUID, text: String)
@@ -61,7 +67,7 @@ public enum TranscriptEntry: Sendable, Equatable, Identifiable {
         switch self {
         case .thinking(let id, _, _), .text(let id, _, _), .toolCall(let id, _),
              .toolResult(let id, _, _), .steerQueued(let id, _), .steerDelivered(let id, _),
-             .turnEnded(let id, _), .incident(let id, _):
+             .steerDropped(let id, _), .turnEnded(let id, _), .incident(let id, _):
             return id
         }
     }

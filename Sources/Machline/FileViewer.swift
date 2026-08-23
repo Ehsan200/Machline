@@ -1,29 +1,28 @@
 import HarnessCore
 import SwiftUI
 
-/// A file, read and coloured.
+/// A file, read and coloured — and now editable.
 ///
-/// Exists because "open" used to mean handing the path to another application. Reading a file the
-/// agent just touched should not require leaving the window — and the system editor has no idea
-/// which lines the agent changed.
+/// Reading a file the agent just touched should not mean leaving the window, and the system editor
+/// has no idea which lines it changed. Editing is here for the same reason: the change after a diff
+/// is usually three lines, and the round trip out is longer than the edit. Not a replacement for a
+/// real editor — no completion, no rename, no jump to definition.
 struct FileViewer: View {
     @Bindable var model: AppModel
     let path: String
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var contents: String?
-    @State private var failure: String?
-    @State private var isLoading = true
-
-    /// Files above this are shown from the top only. Colouring a megabyte in one pass, on the main
-    /// actor, during a sheet animation, is not something to do eagerly.
-    private nonisolated static let byteLimit = 512 * 1024
+    @State private var editor = EditorModel()
+    @State private var gutter = EditorGutterModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Hairline(color: Theme.Colors.border)
+            if let failure = editor.saveFailure {
+                saveFailureStrip(failure)
+            }
             body_
         }
         .frame(width: 900, height: 660)
@@ -31,11 +30,13 @@ struct FileViewer: View {
         .selectableTextTint()
         .onExitCommand { dismiss() }
         .task { await load() }
+        // The pending autosave dies with this view; closing must not lose half a second of edit.
+        .onDisappear { editor.flush() }
     }
 
     @ViewBuilder
     private var body_: some View {
-        if isLoading {
+        if editor.isLoading {
             HStack(spacing: Theme.Space.sm) {
                 Spinner(size: 11, color: Theme.Colors.subtle)
                 Text("Reading…")
@@ -43,68 +44,42 @@ struct FileViewer: View {
                     .foregroundStyle(Theme.Colors.subtle)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let failure {
+        } else if let failure = editor.failure {
             Text(failure)
                 .font(Theme.Typography.control)
                 .foregroundStyle(Theme.Colors.subtle)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let contents {
-            ScrollView([.vertical, .horizontal]) {
-                HStack(alignment: .top, spacing: 0) {
-                    lineNumbers(for: contents)
-                    // One `Text` for the whole file: selection cannot cross separate views, so a
-                    // per-line stack could only ever be copied one line at a time.
-                    Text(highlighted(contents))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .padding(.horizontal, Theme.Space.md)
-                }
-                .padding(.vertical, Theme.Space.md)
+        } else if let buffer = editor.buffer {
+            HStack(spacing: 0) {
+                GutterView(model: gutter)
+                CodeEditor(
+                    text: buffer.contents,
+                    revision: editor.revision,
+                    fileName: path,
+                    isEditable: true,
+                    onEdit: { editor.edited($0) },
+                    saveGeneration: editor.saveGeneration,
+                    gutter: gutter)
             }
         }
     }
 
-    private func lineNumbers(for contents: String) -> some View {
-        let count = contents.reduce(into: 1) { total, character in
-            if character == "\n" { total += 1 }
+    /// A write that did not happen sits where the next keystroke cannot push it off screen.
+    private func saveFailureStrip(_ text: String) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.Colors.warning)
+            Text(text)
+                .font(Theme.Typography.meta)
+                .foregroundStyle(Theme.Colors.warning)
+            Spacer(minLength: Theme.Space.md)
+            QuietButton(title: "Save anyway") { editor.save(force: true) }
         }
-        var gutter = AttributedString(
-            (1...max(count, 1)).map(String.init).joined(separator: "\n"))
-        gutter.font = Theme.Typography.monoSmall
-        gutter.foregroundColor = Theme.Colors.subtle
-
-        return Text(gutter)
-            .multilineTextAlignment(.trailing)
-            .padding(.horizontal, Theme.Space.sm)
-            .frame(minWidth: 44, alignment: .trailing)
-    }
-
-    /// Applies the scanner's spans to the source.
-    private func highlighted(_ source: String) -> AttributedString {
-        var output = AttributedString(source)
-        output.font = Theme.Typography.monoSmall
-        output.foregroundColor = Theme.Colors.text
-
-        // Routed through the filename so a single-file component gets each of its regions scanned
-        // with the language that region actually holds.
-        for span in SyntaxHighlighter.spans(in: source, fileName: path) {
-            guard let lower = AttributedString.Index(span.range.lowerBound, within: output),
-                  let upper = AttributedString.Index(span.range.upperBound, within: output)
-            else { continue }
-            output[lower..<upper].foregroundColor = colour(for: span.kind)
-        }
-        return output
-    }
-
-    private func colour(for kind: SyntaxSpan.Kind) -> Color {
-        switch kind {
-        case .comment: return Theme.Colors.subtle
-        case .string: return Theme.Colors.success
-        case .keyword: return Theme.Colors.accent
-        case .number: return Theme.Colors.code
-        case .type: return Theme.Colors.link
-        case .plain: return Theme.Colors.text
-        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.vertical, Theme.Space.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Colors.warning.opacity(0.10))
     }
 
     private var header: some View {
@@ -116,7 +91,7 @@ struct FileViewer: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            if !SyntaxHighlighter.canHighlight(fileName: path) {
+            if editor.buffer != nil, !SyntaxHighlighter.canHighlight(fileName: path) {
                 // Said rather than silently shown plain, so unhighlighted does not read as broken.
                 Text("no highlighting for this type")
                     .font(Theme.Typography.meta)
@@ -125,7 +100,11 @@ struct FileViewer: View {
 
             Spacer(minLength: Theme.Space.md)
 
-            if let contents {
+            if editor.buffer != nil {
+                saveControls
+            }
+
+            if let contents = editor.buffer?.contents {
                 QuoteButton(
                     model: model, text: contents, source: .file(path: path, lines: nil),
                     help: "Quote this file in your next message")
@@ -139,36 +118,38 @@ struct FileViewer: View {
         .padding(.vertical, Theme.Space.md)
     }
 
+    /// Shown even while autosave is on: "it saves itself" only reassures if you can see it happen.
+    @ViewBuilder
+    private var saveControls: some View {
+        Text(editor.isDirty ? "Unsaved" : "Saved")
+            .font(Theme.Typography.meta)
+            .foregroundStyle(editor.isDirty ? Theme.Colors.warning : Theme.Colors.subtle)
+
+        CheckBox(isOn: Binding(
+            get: { editor.isAutosaveEnabled },
+            set: { editor.isAutosaveEnabled = $0 })
+        ) {
+            Text("Autosave")
+                .font(Theme.Typography.meta)
+                .foregroundStyle(Theme.Colors.muted)
+        }
+
+        // Kept with autosave on: a hand that presses it from habit should not meet nothing.
+        Button("Save") { editor.save() }
+            .buttonStyle(.plain)
+            .font(Theme.Typography.meta)
+            .foregroundStyle(editor.isDirty ? Theme.Colors.link : Theme.Colors.subtle)
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(!editor.isDirty)
+    }
+
     private func load() async {
         // Resolved through the model, which knows a Git path is relative to its repository rather
         // than to the workspace.
         guard let url = model.fileURL(for: path) else {
-            failure = "Could not find \(path) on disk."
-            isLoading = false
+            editor.reportMissing(path)
             return
         }
-
-        // A tuple rather than `Result`: the failure here is a sentence for the operator, not an
-        // error to be thrown or matched on.
-        let outcome = await Task.detached(
-            priority: .userInitiated
-        ) { () -> (text: String?, message: String?) in
-            guard let data = try? Data(contentsOf: url) else {
-                return (nil, "Could not read \(url.lastPathComponent).")
-            }
-            // A binary file rendered as text is a screenful of replacement characters.
-            guard let text = String(data: data, encoding: .utf8) else {
-                return (nil, "Not a text file.")
-            }
-            guard data.count <= Self.byteLimit else {
-                let prefix = String(text.prefix(Self.byteLimit / 2))
-                return (prefix + "\n\n… truncated — open externally for the whole file.", nil)
-            }
-            return (text, nil)
-        }.value
-
-        contents = outcome.text
-        failure = outcome.message
-        isLoading = false
+        await editor.load(url)
     }
 }

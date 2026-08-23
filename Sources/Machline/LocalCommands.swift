@@ -308,6 +308,8 @@ extension AppModel {
                 case .text(_, _, let text): blocks.append("## Agent\n\n\(text)")
                 case .steerDelivered(_, let text), .steerQueued(_, let text):
                     blocks.append("## You\n\n\(text)")
+                case .steerDropped(_, let text):
+                    blocks.append("## You (not delivered)\n\n\(text)")
                 case .toolCall(_, let use):
                     blocks.append("### \(use.name)\n\n```\n\(use.bashCommand ?? "")\n```")
                 default: break
