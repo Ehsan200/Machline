@@ -119,6 +119,49 @@ struct PromptEditor: NSViewRepresentable {
             }
         }
 
+        /// Whether there is nothing above the caret, and nothing below it.
+        ///
+        /// Measured in *display* lines, not paragraphs: a long single line that soft-wraps occupies
+        /// several rows on screen, and Up on its second row must move the caret up a row like it
+        /// does everywhere else — reading it as "still the first line, so recall history" would
+        /// throw away what was being typed.
+        @MainActor
+        private static func caretIsOnFirstLine(of textView: NSTextView) -> Bool {
+            guard let line = caretLineFragment(in: textView) else { return true }
+            return line.minY <= firstLineOrigin(in: textView)
+        }
+
+        @MainActor
+        private static func caretIsOnLastLine(of textView: NSTextView) -> Bool {
+            guard let line = caretLineFragment(in: textView),
+                  let layoutManager = textView.layoutManager,
+                  let container = textView.textContainer
+            else { return true }
+            let used = layoutManager.usedRect(for: container)
+            return line.maxY >= used.maxY - 0.5
+        }
+
+        /// The rectangle of the display line the caret sits on.
+        @MainActor
+        private static func caretLineFragment(in textView: NSTextView) -> CGRect? {
+            guard let layoutManager = textView.layoutManager, textView.textContainer != nil,
+                  layoutManager.numberOfGlyphs > 0
+            else { return nil }
+            let caret = textView.selectedRange().location
+            guard caret != NSNotFound else { return nil }
+            // A caret past the last character belongs to the line that character is on.
+            let glyph = min(
+                layoutManager.glyphIndexForCharacter(at: caret), layoutManager.numberOfGlyphs - 1)
+            return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        }
+
+        @MainActor
+        private static func firstLineOrigin(in textView: NSTextView) -> CGFloat {
+            guard let layoutManager = textView.layoutManager, layoutManager.numberOfGlyphs > 0
+            else { return 0 }
+            return layoutManager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).minY
+        }
+
         /// AppKit routes special keys here as selector names.
         func textView(
             _ textView: NSTextView, doCommandBy selector: Selector
@@ -137,12 +180,19 @@ struct PromptEditor: NSViewRepresentable {
 
             // `moveUp`/`moveDown` are also what ctrl-P and ctrl-N produce, so history and the
             // completion list share one path.
+            //
+            // History only claims the key at the edge of the draft. Taking it unconditionally meant
+            // a multi-line message could not be edited: pressing Up on the third line replaced the
+            // whole thing with the last prompt instead of moving the caret. Returning `false` hands
+            // the key back to AppKit, which moves the caret the way every other text view does.
             case #selector(NSResponder.moveUp(_:)):
                 if parent.onCompletionKey(.up) { return true }
+                guard Self.caretIsOnFirstLine(of: textView) else { return false }
                 return parent.onHistory(true)
 
             case #selector(NSResponder.moveDown(_:)):
                 if parent.onCompletionKey(.down) { return true }
+                guard Self.caretIsOnLastLine(of: textView) else { return false }
                 return parent.onHistory(false)
 
             // Shift-Return inserts the newline a multi-line composer needs.

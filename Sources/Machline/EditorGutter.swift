@@ -1,4 +1,5 @@
 import AppKit
+import HarnessCore
 import Observation
 import SwiftUI
 
@@ -16,6 +17,8 @@ struct GutterRow: Identifiable, Equatable {
 final class EditorGutterModel {
     private(set) var rows: [GutterRow] = []
     private(set) var lineCount = 1
+    /// What Git says about each line, keyed by line number in the working tree.
+    var marks: [Int: GitLineMark] = [:]
 
     /// Wide enough for the longest line number, and no wider.
     var width: CGFloat {
@@ -49,10 +52,14 @@ struct GutterView: View {
     var body: some View {
         Canvas { context, size in
             for row in model.rows {
+                if let mark = model.marks[row.number] {
+                    context.fill(Self.marker(for: mark, row: row, in: size), with: .color(tint(mark)))
+                }
                 context.draw(
                     Text("\(row.number)")
                         .font(Theme.Typography.gutter)
-                        .foregroundStyle(Theme.Colors.subtle),
+                        .foregroundStyle(model.marks[row.number] == nil
+                            ? Theme.Colors.subtle : Theme.Colors.muted),
                     at: CGPoint(x: size.width - Theme.Space.sm, y: row.top + row.height / 2),
                     anchor: .trailing)
             }
@@ -61,5 +68,28 @@ struct GutterView: View {
         .background(Theme.Colors.panel)
         .overlay(alignment: .trailing) { VerticalHairline(color: Theme.Colors.divider) }
         .allowsHitTesting(false)
+    }
+
+    /// A bar down the outer edge for a line that is still there, and a wedge at the seam for one
+    /// that is not — a removal has no row of its own to colour.
+    private static func marker(for mark: GitLineMark, row: GutterRow, in size: CGSize) -> Path {
+        let width: CGFloat = 2
+        guard mark != .removed else {
+            return Path { path in
+                path.move(to: CGPoint(x: 0, y: row.top + 3))
+                path.addLine(to: CGPoint(x: width * 2, y: row.top))
+                path.addLine(to: CGPoint(x: 0, y: row.top - 3))
+                path.closeSubpath()
+            }
+        }
+        return Path(CGRect(x: 0, y: row.top, width: width, height: row.height))
+    }
+
+    private func tint(_ mark: GitLineMark) -> Color {
+        switch mark {
+        case .added: return Theme.Colors.diffAddedText
+        case .modified: return Theme.Colors.link
+        case .removed: return Theme.Colors.diffDeletedText
+        }
     }
 }

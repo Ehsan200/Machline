@@ -1815,6 +1815,16 @@ extension AppModel {
         return sorted
     }
 
+    /// The file against HEAD, for the editor's margin.
+    ///
+    /// Deliberately not `diff(for:)`, which merges the staged and unstaged diffs into one summary
+    /// for the Changes list. That summary is fine as a count and wrong as a set of line numbers: the
+    /// staged diff numbers its lines against the index rather than against the file on screen.
+    func workingTreeDiff(for path: String) -> GitFileDiff? {
+        let wanted = repositoryRelativePath(path)
+        return git?.workingTree.first { $0.newPath == wanted }
+    }
+
     func diff(for path: String) -> GitFileDiff? {
         let wanted = repositoryRelativePath(path)
         return sessionChanges.first { $0.newPath == wanted }

@@ -22,6 +22,9 @@ final class GitPanelModel {
     private(set) var status: GitStatus?
     private(set) var unstaged: [GitFileDiff] = []
     private(set) var staged: [GitFileDiff] = []
+    /// The working tree against HEAD. Neither of the two above answers that, and it is what the
+    /// editor's margin needs — see `GitManager.workingTreeDiff`.
+    private(set) var workingTree: [GitFileDiff] = []
     private(set) var recentCommits: [GitManager.Commit] = []
     private(set) var isRepository = false
     private(set) var errorMessage: String?
@@ -482,6 +485,7 @@ final class GitPanelModel {
         let status: GitStatus
         let unstaged: [GitFileDiff]
         let staged: [GitFileDiff]
+        let workingTree: [GitFileDiff]
         let commits: [GitManager.Commit]
         let remotes: [GitRemote]
         let pushPrimary: String?
@@ -491,6 +495,18 @@ final class GitPanelModel {
     private struct RefreshFailure: Error, CustomStringConvertible {
         let message: String
         var description: String { message }
+    }
+
+    /// One file against HEAD, off the main actor.
+    ///
+    /// The editor's margin used to wait on `refresh()`, which reads status, both diffs, the log and
+    /// the remotes — six subprocesses and a coalescing delay to answer a question about one file.
+    /// Typing then took about a second to reach the margin.
+    func fileDiff(_ path: String) async -> GitFileDiff? {
+        let manager = self.manager
+        return await Task.detached(priority: .userInitiated) { () -> GitFileDiff? in
+            try? manager.workingTreeDiff(paths: [path]).first { $0.newPath == path }
+        }.value
     }
 
     func refresh() {
@@ -515,6 +531,7 @@ final class GitPanelModel {
                         status: status,
                         unstaged: try manager.unstagedDiffIncludingUntracked(status: status),
                         staged: try manager.stagedDiff(),
+                        workingTree: try manager.workingTreeDiff(status: status),
                         commits: try manager.recentCommits(limit: 15),
                         remotes: remotes,
                         pushPrimary: status.branch.head.flatMap {
@@ -550,6 +567,7 @@ final class GitPanelModel {
                     self.status = snapshot.status
                     self.unstaged = snapshot.unstaged
                     self.staged = snapshot.staged
+                    self.workingTree = snapshot.workingTree
                     self.recentCommits = snapshot.commits
                     self.remotes = snapshot.remotes
                     self.pushPrimary = snapshot.pushPrimary

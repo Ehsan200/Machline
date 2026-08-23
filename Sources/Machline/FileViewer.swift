@@ -20,7 +20,9 @@ struct FileViewer: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Hairline(color: Theme.Colors.border)
-            if let failure = editor.saveFailure {
+            if let conflict = editor.conflict {
+                conflictStrip(conflict)
+            } else if let failure = editor.saveFailure {
                 saveFailureStrip(failure)
             }
             body_
@@ -30,6 +32,18 @@ struct FileViewer: View {
         .selectableTextTint()
         .onExitCommand { dismiss() }
         .task { await load() }
+        // The agent edits while this is open, so the margin follows the Git panel's own refresh
+        // rather than being read once when the file was loaded.
+        .onChange(of: model.git?.revision ?? 0, initial: true) { refreshMarks() }
+        // Our own writes are invisible to Git until something asks it again, so the margin never
+        // caught up with what was just typed. `refresh()` coalesces, so a burst of autosaves is one
+        // pass over the repository.
+        // Two different jobs. The margin asks Git about this one file and lands in a few tens of
+        // milliseconds; the Changes list needs the whole repository and can take its time.
+        .onChange(of: editor.saveGeneration) {
+            Task { await refreshMarksFromGit() }
+            model.git?.refresh()
+        }
         // The pending autosave dies with this view; closing must not lose half a second of edit.
         .onDisappear { editor.flush() }
     }
@@ -62,6 +76,35 @@ struct FileViewer: View {
                     gutter: gutter)
             }
         }
+    }
+
+    /// The other writer got here first.
+    ///
+    /// Autosave stops while this is up. Both answers lose something, so neither is taken on the
+    /// operator's behalf — and the agent's work is named, since "reload" otherwise reads as undo.
+    @ViewBuilder
+    private func conflictStrip(_ conflict: EditConflict.Decision) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Image(systemName: conflict == .vanished ? "trash" : "arrow.triangle.branch")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.Colors.warning)
+            Text(conflict == .vanished
+                ? "This file was deleted while you were editing it."
+                : "The agent changed this file while you were editing it. Autosave is paused.")
+                .font(Theme.Typography.meta)
+                .foregroundStyle(Theme.Colors.warning)
+
+            Spacer(minLength: Theme.Space.md)
+
+            if conflict != .vanished {
+                QuietButton(title: "Use theirs") { editor.reloadFromDisk() }
+            }
+            QuietButton(title: "Keep mine") { editor.overwriteDisk() }
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.vertical, Theme.Space.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Colors.warning.opacity(0.12))
     }
 
     /// A write that did not happen sits where the next keystroke cannot push it off screen.
@@ -141,6 +184,18 @@ struct FileViewer: View {
             .foregroundStyle(editor.isDirty ? Theme.Colors.link : Theme.Colors.subtle)
             .keyboardShortcut("s", modifiers: .command)
             .disabled(!editor.isDirty)
+    }
+
+    /// What Git says about the file on screen, for the margin.
+    private func refreshMarks() {
+        gutter.marks = model.workingTreeDiff(for: path).map(GitLineMarks.marks(in:)) ?? [:]
+    }
+
+    /// Asks Git about this file alone, rather than waiting for the panel's whole-repository pass.
+    private func refreshMarksFromGit() async {
+        guard let git = model.git else { return }
+        let diff = await git.fileDiff(model.repositoryRelativePath(path))
+        gutter.marks = diff.map(GitLineMarks.marks(in:)) ?? [:]
     }
 
     private func load() async {

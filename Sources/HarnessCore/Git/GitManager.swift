@@ -62,6 +62,40 @@ public struct GitManager: Sendable {
         return GitDiffParser.parse(try runner.check(arguments).text)
     }
 
+    /// The working tree against HEAD, untracked files included.
+    ///
+    /// Neither of the two diffs above answers "how does this file differ from the last commit".
+    /// `unstagedDiff` stops at the index, so anything already staged reads as unchanged, and
+    /// `stagedDiff` numbers its lines against the index rather than against the file on disk. Using
+    /// either for the editor's margin marks lines that are not the ones that changed.
+    public func workingTreeDiff(
+        status known: GitStatus? = nil, paths: [String] = []
+    ) throws -> [GitFileDiff] {
+        // A repository with no commits has no HEAD to diff against, and `git diff HEAD` fails
+        // rather than reporting everything as new.
+        let output = try runner.run(
+            ["diff", "HEAD"] + Self.diffFlags + (paths.isEmpty ? [] : ["--"] + paths))
+        guard output.exitCode == 0 else {
+            return try unstagedDiffIncludingUntracked(status: known)
+        }
+        var diffs = GitDiffParser.parse(output.text)
+        let tracked = Set(diffs.map(\.newPath))
+        let wanted = Set(paths)
+
+        // `status` is only here to find untracked files, which cost a subprocess of their own. A
+        // named file that already appeared in the diff is tracked, so there is nothing to look for.
+        if !wanted.isEmpty, wanted.isSubset(of: tracked) {
+            return diffs.sorted { $0.newPath < $1.newPath }
+        }
+        let status = try known ?? self.status()
+        for file in status.files
+        where file.isUntracked && !tracked.contains(file.path)
+            && (wanted.isEmpty || wanted.contains(file.path)) {
+            if let diff = try untrackedDiff(path: file.path) { diffs.append(diff) }
+        }
+        return diffs.sorted { $0.newPath < $1.newPath }
+    }
+
     /// A diff for a file git is not yet tracking.
     ///
     /// `git diff` ignores untracked files entirely, so the workbench would otherwise show a new file

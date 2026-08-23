@@ -18,6 +18,8 @@ final class EditorModel {
     private(set) var isLoading = true
     /// Why the last write did not happen. Cleared by the next one that does.
     private(set) var saveFailure: String?
+    /// Set when the file moved underneath the buffer and only the operator can settle it.
+    private(set) var conflict: EditConflict.Decision?
     /// Bumped on a load or reload. Typing never bumps it, or the caret jumps to the top.
     private(set) var revision = 0
     /// Bumped per write. The editor ends its undo run on each, so ⌘Z steps through typing pauses.
@@ -31,9 +33,10 @@ final class EditorModel {
     }
 
     private var autosave: Task<Void, Never>?
+    private var watch: Task<Void, Never>?
 
-    /// Short enough that the agent reads what is on screen; long enough that a burst is one write.
-    private static let autosaveDelay = Duration.milliseconds(500)
+    /// Short enough that the margin keeps up with typing; long enough that a burst is one write.
+    private static let autosaveDelay = Duration.milliseconds(250)
     private static let autosaveKey = "editorAutosaveEnabled"
 
     /// Layout is no longer paid per line, but the whole file is still held in a `String`.
@@ -63,12 +66,69 @@ final class EditorModel {
         case .success(let opened):
             buffer = opened
             failure = nil
+            conflict = nil
             revision += 1
+            startWatching(url)
         case .failure(let error):
             buffer = nil
             failure = error.message
         }
         isLoading = false
+    }
+
+    /// Watches for the other writer.
+    ///
+    /// The agent edits the same tree, so a file can move under the buffer at any moment. A clean
+    /// buffer just follows it; a dirty one has to ask, because either answer loses work.
+    private func startWatching(_ url: URL) {
+        watch?.cancel()
+        watch = Task { [weak self] in
+            for await _ in FileWatcher.changes(to: url) {
+                guard let self else { return }
+                self.noteDiskChanged()
+            }
+        }
+    }
+
+    private func noteDiskChanged() {
+        guard let buffer else { return }
+        // Our own save re-stamps the buffer, so the write we just made reads as `.unchanged` here
+        // and the watcher's report of it costs nothing.
+        switch buffer.conflictDecision() {
+        case .unchanged:
+            if conflict != nil { conflict = nil }
+        case .reload:
+            reloadFromDisk()
+        case .conflict:
+            autosave?.cancel()
+            conflict = .conflict
+        case .vanished:
+            autosave?.cancel()
+            conflict = .vanished
+        }
+    }
+
+    /// Adopts what is on disk, discarding unsaved edits. The editor is told to reinstall the text
+    /// by way of `revision`.
+    func reloadFromDisk() {
+        guard var current = buffer else { return }
+        do {
+            try current.reload()
+            buffer = current
+            conflict = nil
+            saveFailure = nil
+            revision += 1
+        } catch let error as TextBufferError {
+            failure = error.message
+        } catch {
+            failure = error.localizedDescription
+        }
+    }
+
+    /// Keeps what is on screen, overwriting whatever arrived.
+    func overwriteDisk() {
+        save(force: true)
+        conflict = nil
     }
 
     /// The path resolved to nothing, which is not the same as failing to open.
@@ -104,6 +164,10 @@ final class EditorModel {
             if try current.save(force: force) { saveGeneration += 1 }
             buffer = current
             saveFailure = nil
+            conflict = nil
+        } catch TextBufferError.conflicted {
+            // Not a failure to report as text: it has two answers and only the operator has one.
+            conflict = .conflict
         } catch let error as TextBufferError {
             saveFailure = error.message
         } catch {
@@ -111,10 +175,12 @@ final class EditorModel {
         }
     }
 
-    /// Writes before the editor goes away, since the pending timer goes with it.
+    /// Writes before the editor goes away, since the pending timer and the watch go with it.
     func flush() {
         autosave?.cancel()
         autosave = nil
-        if isDirty { save() }
+        watch?.cancel()
+        watch = nil
+        if isDirty, conflict == nil { save() }
     }
 }
