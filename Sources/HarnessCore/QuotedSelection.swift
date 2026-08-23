@@ -1,17 +1,8 @@
 import Foundation
 
-/// A piece of the conversation the operator has pinned to their next message.
-///
-/// Quoting exists because pointing is faster than describing: an operator who wants the agent to
-/// look at one code block, one stack trace, or one hunk of a patch should not have to retype it or
-/// explain where it was. The quote carries its own provenance so the agent is told what it is
-/// looking at, not merely handed a wall of text.
+/// A piece of the conversation pinned to the next message.
 public struct QuotedSelection: Identifiable, Hashable, Sendable {
 
-    /// Where the text came from, which is what the label is built out of.
-    ///
-    /// A file quote can name its lines; nothing in the transcript can, because a reply has no line
-    /// numbers to cite — so those describe themselves by kind and size instead.
     public enum Source: Hashable, Sendable {
         case file(path: String, lines: ClosedRange<Int>?)
         case patch(path: String)
@@ -19,7 +10,6 @@ public struct QuotedSelection: Identifiable, Hashable, Sendable {
         case code(language: String?)
         case terminal
         case toolOutput
-        /// Text lifted out of a selection, where the app knows the string but not the surface.
         case selection
     }
 
@@ -33,15 +23,15 @@ public struct QuotedSelection: Identifiable, Hashable, Sendable {
         self.source = source
     }
 
-    /// Newline-separated, counting a trailing newline as ending its line rather than starting one.
     public var lineCount: Int {
         guard !text.isEmpty else { return 0 }
         var trimmed = Substring(text)
         while trimmed.last == "\n" { trimmed = trimmed.dropLast() }
-        return trimmed.isEmpty ? 1 : trimmed.split(separator: "\n", omittingEmptySubsequences: false).count
+        return trimmed.isEmpty
+            ? 1
+            : trimmed.split(separator: "\n", omittingEmptySubsequences: false).count
     }
 
-    /// What the chip says, and what the agent is told the quote is.
     public var label: String {
         switch source {
         case .file(let path, let lines):
@@ -69,7 +59,6 @@ public struct QuotedSelection: Identifiable, Hashable, Sendable {
         lineCount == 1 ? "1 line" : "\(lineCount) lines"
     }
 
-    /// The first non-empty line, shortened — enough to tell two quotes apart on the chip row.
     public func snippet(limit: Int = 48) -> String {
         let first = text
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -82,23 +71,16 @@ public struct QuotedSelection: Identifiable, Hashable, Sendable {
 
 /// Turns pinned quotes and what was typed into the one string the agent receives.
 ///
-/// The quotes are tagged rather than prefixed with `>`. A blockquote marker is ambiguous twice
-/// over: the agent cannot tell quoted evidence from prose the operator wrote in that style, and
-/// quoted Markdown that already contains `>` comes out nested and wrong. A tag says exactly where
-/// the borrowed text starts, where it ends, and what it was borrowed from.
+/// Tagged rather than `>`-prefixed: a blockquote cannot be told apart from prose written in that
+/// style, and quoted Markdown containing `>` comes out nested.
 public enum QuotePrompt {
 
-    /// Past this, a quote is written to a file and mentioned instead of being pasted in whole.
-    /// A long quote inlined is a context window spent on text the agent may only need to skim.
     public static let inlineLineLimit = 40
     public static let inlineByteLimit = 4096
 
     static let closingTag = "</quote>"
 
-    /// Whether this text has to go to a file rather than into the message.
-    ///
-    /// Size is the usual reason. Text containing the closing tag is the other one: inlining it
-    /// would end the quote early and leave the remainder reading as the operator's own words.
+    /// Text carrying the closing tag would end its own quote early, so it goes to a file too.
     public static func needsSpill(_ text: String) -> Bool {
         if text.utf8.count > inlineByteLimit { return true }
         if text.contains(closingTag) { return true }
@@ -110,11 +92,8 @@ public enum QuotePrompt {
         return false
     }
 
-    /// The message to send.
-    ///
-    /// `spilled` maps a quote to the path its text was written to. A quote that should have been
-    /// spilled but has no path — the write failed — is inlined anyway: a truncated conversation is
-    /// worse than a long one, and the operator asked for this text to be sent.
+    /// `spilled` maps a quote to the path its text was written to. A quote that should have
+    /// spilled but has no path is inlined anyway rather than dropped.
     public static func compose(
         quotes: [QuotedSelection], spilled: [UUID: String] = [:], typed: String
     ) -> String {
@@ -143,8 +122,7 @@ public enum QuotePrompt {
         return blocks.filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
-    /// Quoted text keeps its own shape — indentation in code is meaningful — so only the blank
-    /// edges that would push the closing tag off on its own island are taken off.
+    /// Only the blank edges come off; indentation inside a quote is meaningful.
     private static func body(of text: String) -> String {
         var body = Substring(text)
         while body.last == "\n" || body.last == "\r" { body = body.dropLast() }
@@ -152,8 +130,6 @@ public enum QuotePrompt {
         return String(body)
     }
 
-    /// Attribute values are the one place a stray quote or angle bracket would change the shape of
-    /// the tag rather than just appearing inside it.
     private static func escaped(_ value: String) -> String {
         value
             .replacingOccurrences(of: "&", with: "&amp;")

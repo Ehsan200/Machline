@@ -75,10 +75,13 @@ struct CenterStageView: View {
 
             ResizeHandle(
                 onDrag: { translation in
-                    // Dragging up grows the composer, so the delta is inverted.
-                    draggedHeight = min(
+                    // Dragging up grows the composer, so the delta is inverted. Rounded and
+                    // written only on a change: every write here rebuilds the whole column.
+                    let next = min(
                         composerCeiling(availableHeight: availableHeight),
                         max(Theme.Layout.composerMinHeight, composerHeight - translation))
+                        .rounded()
+                    if next != draggedHeight { draggedHeight = next }
                 },
                 onEnd: {
                     if let draggedHeight { storedComposerHeight = draggedHeight }
@@ -103,12 +106,30 @@ struct CenterStageView: View {
     /// outlives the window it was chosen in, and a window later opened smaller must not let it
     /// push the composer's own controls past the bottom edge.
     private func composerCeiling(availableHeight: CGFloat) -> CGFloat {
-        let share = availableHeight * Theme.Layout.composerMaxFraction
-        let leavingRoomForTheTimeline = availableHeight - Theme.Layout.timelineMinHeight
-        return max(Theme.Layout.composerMinHeight, min(share, leavingRoomForTheTimeline))
+        PaneLayout.composerHeight(
+            requested: .greatestFiniteMagnitude,
+            available: availableHeight,
+            minimum: Theme.Layout.composerMinHeight,
+            maximumFraction: Theme.Layout.composerMaxFraction,
+            timelineMinimum: Theme.Layout.timelineMinHeight)
     }
 
     private var terminalHeight: CGFloat { draggedTerminalHeight ?? storedTerminalHeight }
+
+    /// The pane's handle and header, which take height before the emulator gets any.
+    private static let terminalChrome: CGFloat = 9 + 34
+    private static let terminalMinHeight: CGFloat = 120
+    private static let terminalMaxFraction: CGFloat = 0.75
+
+    private func terminalCeiling(availableHeight: CGFloat) -> CGFloat {
+        PaneLayout.shellCeiling(
+            available: availableHeight,
+            composer: min(composerHeight, composerCeiling(availableHeight: availableHeight)),
+            chrome: Self.terminalChrome,
+            minimum: Self.terminalMinHeight,
+            maximumFraction: Self.terminalMaxFraction,
+            timelineMinimum: Theme.Layout.timelineMinHeight)
+    }
 
     /// The login shell first, then everything `/etc/shells` lists.
     ///
@@ -137,8 +158,11 @@ struct CenterStageView: View {
         VStack(spacing: 0) {
             ResizeHandle(
                 onDrag: { translation in
-                    let ceiling = max(120, availableHeight * 0.75)
-                    draggedTerminalHeight = min(ceiling, max(120, terminalHeight - translation))
+                    let next = min(
+                        terminalCeiling(availableHeight: availableHeight),
+                        max(Self.terminalMinHeight, terminalHeight - translation))
+                        .rounded()
+                    if next != draggedTerminalHeight { draggedTerminalHeight = next }
                 },
                 onEnd: {
                     if let draggedTerminalHeight { storedTerminalHeight = draggedTerminalHeight }
@@ -184,7 +208,7 @@ struct CenterStageView: View {
                 generation: Binding(
                     get: { model.terminalGeneration },
                     set: { _ in }))
-                .frame(height: min(terminalHeight, max(120, availableHeight * 0.75)))
+                .frame(height: min(terminalHeight, terminalCeiling(availableHeight: availableHeight)))
         }
     }
 
@@ -543,8 +567,6 @@ struct TimelineEventView: View {
                     .tracking(0.8)
                     .foregroundStyle(Theme.Colors.muted)
                 Spacer(minLength: 0)
-                // The whole reply, for the common "about that answer —" follow-up. A part of it
-                // goes through the selection instead: ⌘⇧'.
                 QuoteButton(
                     model: model, text: text, source: .reply,
                     help: "Quote this reply in your next message")
@@ -719,8 +741,6 @@ struct ToolResultRow: View {
         return source.split(separator: "\n").first.map(String.init) ?? ""
     }
 
-    /// What a quote of this row carries: both streams in the order they are shown, so the quote
-    /// says the same thing the row does rather than dropping the half that explains it.
     private var quotableOutput: String {
         guard let output, !(output.stdout.isEmpty && output.stderr.isEmpty) else { return result.text }
         return [output.stdout, output.stderr]

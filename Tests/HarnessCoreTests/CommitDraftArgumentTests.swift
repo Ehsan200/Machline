@@ -7,8 +7,6 @@ struct CommitDraftArgumentTests {
 
     static let sessionID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
 
-    /// The transcript is deleted by the id it was asked for, so a run that never reports one back —
-    /// cancelled, killed, crashed — still leaves nothing in the operator's session list.
     @Test("Both paths name the session themselves")
     func namesTheSession() {
         let cold = CommitDraftGenerator.arguments(
@@ -23,8 +21,6 @@ struct CommitDraftArgumentTests {
         #expect(value(of: "--session-id", in: forked) == expected)
     }
 
-    /// Overriding the model on a fork throws the warm cache away and re-sends the conversation,
-    /// which is slower than the cold small model rather than faster.
     @Test("A fork resumes its parent and keeps that session's model")
     func forkKeepsItsModel() {
         let forked = CommitDraftGenerator.arguments(
@@ -46,8 +42,6 @@ struct CommitDraftArgumentTests {
         #expect(!cold.contains("--fork-session"))
     }
 
-    /// Drafting reads a diff it was handed. It has no business in the operator's settings, their
-    /// MCP servers, or the working tree.
     @Test("Drafting runs sealed off from settings and tools")
     func runsSealedOff() {
         let cold = CommitDraftGenerator.arguments(

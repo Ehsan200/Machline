@@ -1,12 +1,7 @@
 import HarnessCore
 import SwiftUI
 
-/// Pins a piece of the conversation to the next message.
-///
-/// The sibling of `CopyButton`, and it sits beside one wherever both make sense: copying takes text
-/// out of the app, quoting keeps it here and hands it to the agent with a note saying where it came
-/// from. Asking about a code block should not mean copying it, switching to the composer, pasting
-/// it, and then typing an explanation of what was just pasted.
+/// Pins a piece of the conversation to the next message. Sibling of `CopyButton`.
 struct QuoteButton: View {
     let model: AppModel
     let text: String
@@ -42,9 +37,7 @@ struct QuoteButton: View {
 
 /// The pinned quotes, as chips above the input.
 ///
-/// Its own view, reading nothing but `quotes`: the composer is rebuilt on every keystroke and on
-/// every streaming update behind it, and a chip row folded into that body would be rebuilt with it.
-/// Empty means an empty view, so a composer with no quotes is the same height it always was.
+/// Its own view reading nothing but `quotes`, so the composer's own rebuilds do not carry it.
 struct QuoteChipRow: View {
     @Bindable var model: AppModel
 
@@ -75,8 +68,6 @@ struct QuoteChipRow: View {
                 .foregroundStyle(Theme.Colors.text)
                 .lineLimit(1)
 
-            // The label says what it is; the snippet says which one, for two quotes off the same
-            // file or two replies of the same length.
             let snippet = quote.snippet()
             if !snippet.isEmpty {
                 Text(snippet)
@@ -110,11 +101,6 @@ struct QuoteChipRow: View {
     }
 }
 
-/// The quote control over an expanded tool result.
-///
-/// Output is the thing most worth quoting — a stack trace, a failing test, a `git status` nobody
-/// wants to retype — and it is also the thing least worth reading twice, so the control sits above
-/// it rather than inside the scrolling text where it would have to be hunted for.
 struct QuoteOutputRow: View {
     let model: AppModel
     let text: String
@@ -131,11 +117,8 @@ struct QuoteOutputRow: View {
     }
 }
 
-/// The Edit-menu entry behind ⌘⇧'.
-///
-/// A menu item rather than a button on the selection: SwiftUI's selectable `Text` reports neither
-/// that a selection exists nor where it is, so there is nowhere to put a floating control and
-/// nothing to key its appearance on. See `AppModel.quoteSelection`.
+/// ⌘⇧'. A menu item rather than a control on the selection: SwiftUI reports neither that a
+/// selection exists nor where it is. See `AppModel.quoteSelection`.
 struct QuoteCommands: View {
     @FocusedValue(\.windowModel) private var window
 

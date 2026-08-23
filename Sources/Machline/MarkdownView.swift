@@ -224,9 +224,8 @@ extension MarkdownBlock {
 struct MarkdownView: View {
     let markdown: String
     var textColor: Color = Theme.Colors.text
-    /// Passed only where a quote makes sense — the timeline. Held as a plain reference rather than
-    /// `@Bindable`: nothing here reads a property off it, so nothing here should be rebuilt when
-    /// one changes. `nil` renders the same Markdown without the quote control.
+    /// A plain reference, not `@Bindable`: nothing here reads a property off it. `nil` renders
+    /// without the quote control.
     var model: AppModel?
     /// Set for a reply that is still arriving. Each frame of one is a slightly longer prefix of
     /// the last and is never rendered twice, so nothing about it is worth caching — and caching it

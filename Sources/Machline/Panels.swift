@@ -370,9 +370,6 @@ struct GitWorkbenchView: View {
 
                 // Reads the staged diff and writes a Conventional Commits message for it.
                 // Disabled with nothing staged, because there would be nothing to describe.
-                // Writing is the one state the button does not repeat itself in: it stops the run
-                // instead. A draft that turns out to be unwanted — the wrong files staged, the
-                // wrong session forked — should not have to be waited out.
                 Button {
                     if git.isDrafting {
                         git.cancelDraft()
@@ -601,7 +598,7 @@ struct FileDiffModal: View {
                     }
                 }
             } else {
-                note("This file is no longer in the working tree diff.")
+                missingDiff
             }
         }
         .frame(width: 900, height: 640)
@@ -683,6 +680,27 @@ struct FileDiffModal: View {
             .font(Theme.Typography.control)
             .foregroundStyle(Theme.Colors.subtle)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// A file outside the repository never had a diff to show, which is not the same thing as one
+    /// whose changes have gone. Either way the contents are a click away.
+    private var missingDiff: some View {
+        VStack(spacing: Theme.Space.md) {
+            Text(isInsideRepository
+                ? "This file is no longer in the working tree diff."
+                : "This file is outside the project, so it has no diff here.")
+                .font(Theme.Typography.control)
+                .foregroundStyle(Theme.Colors.subtle)
+            QuietButton(title: "View file") { model.replaceDiffModalWithViewer(path: path) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var isInsideRepository: Bool {
+        guard path.hasPrefix("/"), let root = model.workspace?.url.standardizedFileURL.path else {
+            return true
+        }
+        return path.hasPrefix(root + "/")
     }
 
     private func colour(for kind: GitDiffLine.Kind) -> Color {

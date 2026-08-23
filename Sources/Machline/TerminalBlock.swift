@@ -134,8 +134,8 @@ struct ReplayEntryView: View {
         }
     }
 
-    /// `quoting` is the text the label's quote control pins — absent for an entry there is no
-    /// point quoting, like the operator's own message.
+    /// `quoting` is what the label's quote control pins; absent where there is nothing worth
+    /// quoting, like the operator's own message.
     private func labelled(
         _ label: String, strong: Bool, quoting: String? = nil,
         @ViewBuilder content: () -> some View

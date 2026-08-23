@@ -262,16 +262,10 @@ public struct CommitDraftGenerator: Sendable {
         \(truncated)
         """
 
-        // Drafting is a one-shot question, not a conversation the operator will return to — but
-        // the CLI records every run as a session, and a run in the repository would file it under
-        // that project and put it in the session list. A cold run therefore happens in a scratch
-        // directory; a fork has to run where the conversation it forks is filed, so its transcript
-        // is deleted out of that project instead.
-        //
-        // Both are given an id of our choosing. The fork used to take whatever id the CLI minted
-        // and be removed by the one it reported back, which meant a run that never reported —
-        // cancelled, killed, crashed — left its transcript in the operator's session list with no
-        // way to know which one it was. Naming it up front makes the cleanup unconditional.
+        // The CLI records every run as a session. A cold run is filed in a scratch directory; a
+        // fork must run where its conversation lives, so its transcript is deleted out of that
+        // project. Both use an id of our choosing, so a run that never reports one back —
+        // cancelled, killed, crashed — is still cleaned up.
         let scratch = fork == nil ? try Self.makeScratchDirectory() : nil
         let sessionID = UUID()
         defer {
@@ -310,10 +304,7 @@ public struct CommitDraftGenerator: Sendable {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        // Stopping a draft has to stop the child, not just the task waiting on it: the reads below
-        // block until the pipes hit EOF, and nothing else closes them. Killing the process is what
-        // ends them — and the `defer` above then takes the transcript with it, so a cancelled
-        // draft leaves no session behind.
+        // Cancelling has to kill the child: the reads below block until its pipes hit EOF.
         let running = RunningProcess()
         do {
             try Task.checkCancellation()
@@ -336,8 +327,7 @@ public struct CommitDraftGenerator: Sendable {
             running.terminate()
         }
 
-        // A killed run exits non-zero with nothing useful on stderr, so cancellation is reported
-        // as cancellation rather than as a failure the operator has to read and dismiss.
+        // A killed run exits non-zero with nothing on stderr; report it as cancellation.
         try Task.checkCancellation()
 
         guard process.terminationStatus == 0 else {
@@ -352,11 +342,8 @@ public struct CommitDraftGenerator: Sendable {
         return try Self.parseResponse(response)
     }
 
-    /// A child process a cancellation handler can reach.
-    ///
-    /// `onCancel` runs on whichever thread cancelled, and it can fire before the process has been
-    /// launched at all. The lock is what makes both safe: the handler either finds a process and
-    /// kills it, or finds none and leaves a mark that stops it ever starting.
+    /// A child a cancellation handler can reach. `onCancel` runs on another thread and can fire
+    /// before the launch, so the lock covers both orders.
     final class RunningProcess: @unchecked Sendable {
         private let lock = NSLock()
         private var process: Process?
@@ -374,7 +361,6 @@ public struct CommitDraftGenerator: Sendable {
             self.process = process
             let cancelledWhileStarting = isCancelled
             lock.unlock()
-            // Cancelled between the check and the launch: kill what was just started.
             if cancelledWhileStarting { process.terminate() }
         }
 
@@ -387,9 +373,6 @@ public struct CommitDraftGenerator: Sendable {
         }
     }
 
-    /// The command line for one drafting run.
-    ///
-    /// Pure, so what the CLI is actually asked for can be checked without launching it.
     static func arguments(
         sessionID: UUID, fork: Fork?, model: String?, effort: String?
     ) -> [String] {
@@ -401,14 +384,11 @@ public struct CommitDraftGenerator: Sendable {
             "--setting-sources", "",
             "--strict-mcp-config",
             "--tools", "",
-            // Ours on both paths, so the transcript can be removed without waiting to be told
-            // where it went.
             "--session-id", sessionID.uuidString.lowercased()
         ]
         if let fork {
-            // `--fork-session` branches off rather than continuing the operator's conversation, so
-            // the session they are working in is left exactly as it was. The model is left alone
-            // with it: overriding it on a fork throws the warm cache away.
+            // Forking leaves the operator's own conversation untouched, and keeps its model:
+            // overriding it throws the warm cache away.
             arguments += ["--resume", fork.sessionID, "--fork-session"]
         } else if let model {
             arguments += ["--model", model]

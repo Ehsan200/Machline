@@ -26,8 +26,6 @@ struct QuoteTests {
         #expect(code.label == "swift · 1 line")
     }
 
-    /// A trailing newline ends its line rather than starting an empty one, or every quote taken off
-    /// a terminal would claim one more line than it shows.
     @Test("Line counting ignores trailing newlines")
     func lineCounting() {
         #expect(QuotedSelection(text: "a\nb\n", source: .reply).lineCount == 2)
@@ -64,7 +62,6 @@ struct QuoteTests {
         #expect(QuotePrompt.compose(quotes: [], typed: "  hello  ") == "hello")
     }
 
-    /// Pinning a stack trace and pressing Send with nothing typed is a message in itself.
     @Test("A quote with nothing typed is still a message")
     func quoteOnlyMessage() {
         let quote = QuotedSelection(text: "boom", source: .toolOutput)
@@ -97,8 +94,6 @@ struct QuoteTests {
         #expect(!composed.contains("line\nline\nline"))
     }
 
-    /// Inlining text that contains the closing tag would end the quote early and leave the rest
-    /// reading as the operator's own words.
     @Test("Text carrying the closing tag has to go to a file")
     func spillsOnClosingTag() {
         #expect(QuotePrompt.needsSpill("a </quote> b"))
@@ -106,7 +101,6 @@ struct QuoteTests {
         #expect(QuotePrompt.needsSpill(String(repeating: "x", count: QuotePrompt.inlineByteLimit + 1)))
     }
 
-    /// A failed write is not a reason to drop what the operator asked to send.
     @Test("A quote that should have spilled but has no file is inlined anyway")
     func inlinesWhenSpillFailed() {
         let long = String(repeating: "line\n", count: QuotePrompt.inlineLineLimit + 1)

@@ -189,7 +189,13 @@ struct ResizeHandle: View {
 
     @State private var isHovering = false
     @State private var isDragging = false
-    @State private var lastTranslation: CGFloat = 0
+    /// A reference, not `@State`: this changes on every drag callback and rebuilding the handle
+    /// for it is work done sixty times a second for nothing.
+    @State private var drag = DragOrigin()
+
+    final class DragOrigin {
+        var lastTranslation: CGFloat = 0
+    }
 
     var body: some View {
         ZStack {
@@ -215,16 +221,16 @@ struct ResizeHandle: View {
                 .onChanged { value in
                     if !isDragging {
                         isDragging = true
-                        lastTranslation = 0
+                        drag.lastTranslation = 0
                     }
                     // Deltas rather than absolute translation: the caller clamps, and feeding it
                     // an absolute value would fight that clamp on every frame.
-                    onDrag(value.translation.height - lastTranslation)
-                    lastTranslation = value.translation.height
+                    onDrag(value.translation.height - drag.lastTranslation)
+                    drag.lastTranslation = value.translation.height
                 }
                 .onEnded { _ in
                     isDragging = false
-                    lastTranslation = 0
+                    drag.lastTranslation = 0
                     onEnd()
                     if !isHovering { NSCursor.pop() }
                 })

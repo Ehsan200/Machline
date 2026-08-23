@@ -19,8 +19,6 @@ struct ComposerView: View {
                 failureStrip(failure)
                 Hairline()
             }
-            // Above the input, not inside it: a quote is evidence attached to the message rather
-            // than text the operator typed, and editing it as prose is not something to invite.
             QuoteChipRow(model: model)
             inputBody
             Hairline()

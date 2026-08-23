@@ -142,13 +142,8 @@ final class AppModel: Identifiable {
     var model: String?
     var promptDraft: String = ""
 
-    /// Pieces of the conversation pinned to the next message — chips above the composer, tagged
-    /// blocks in the prompt.
-    ///
-    /// Scoped like `promptDraft`, to this session tab, rather than to the selected agent. A
-    /// subagent has no input channel of its own, so a message composed while looking at one goes
-    /// to the parent regardless; dropping the operator's quotes for walking the tree would throw
-    /// away work to enforce a distinction the send path does not make.
+    /// Pinned to the next message. Scoped like `promptDraft` — per tab, not per agent, because a
+    /// subagent's input goes to the parent anyway.
     private(set) var quotes: [QuotedSelection] = []
 
     /// The models offered in the composer's Model cell.
@@ -333,10 +328,6 @@ final class AppModel: Identifiable {
 
     // MARK: Quoting
 
-    /// Pins text to the next message.
-    ///
-    /// Quoting the same text from the same place twice is a second click on the same button, not a
-    /// second quote, so it is dropped rather than stacked.
     func quote(_ text: String, from source: QuotedSelection.Source) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -352,25 +343,15 @@ final class AppModel: Identifiable {
         quotes.removeAll()
     }
 
-    /// Quotes whatever is selected anywhere in the window.
-    ///
-    /// The transcript is rendered as SwiftUI `Text` with `.textSelection(.enabled)`, which offers
-    /// the app no way to read a selection — no string, no range, not even whether one exists. What
-    /// it does offer is `copy:`, so the selection is taken through the pasteboard and the
-    /// pasteboard is then put back the way it was found. Copying is not what the operator asked
-    /// for, and losing what they had copied earlier to do it would be a theft of their clipboard.
-    ///
-    /// The alternative was rebuilding the timeline's prose on `NSTextView` for a real selection
-    /// API. That is the one surface whose frame rate is watched continuously, and this buys the
-    /// same result without touching it.
+    /// Quotes the window's selection. SwiftUI's selectable `Text` exposes no selection API, so it
+    /// is taken through `copy:` and the pasteboard is put back as it was found.
     func quoteSelection() {
         let board = NSPasteboard.general
         let previous = board.string(forType: .string)
         let mark = board.changeCount
         guard NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) else { return }
 
-        // A turn later: the responder that handled `copy:` may finish writing after the send
-        // returns, and reading in the same pass would see the old contents.
+        // A turn later: the responder handling `copy:` may write after the send returns.
         Task { @MainActor in
             guard board.changeCount != mark, let taken = board.string(forType: .string) else { return }
             quote(taken, from: .selection)
@@ -379,11 +360,8 @@ final class AppModel: Identifiable {
         }
     }
 
-    /// The message the agent actually receives: the pinned quotes, then what was typed.
-    ///
-    /// A quote past the inline limit is written to the attachment store and mentioned by path.
-    /// Pasting a thousand lines of output into the prompt spends the context window on text the
-    /// agent may only need to skim, and it can open the file if it needs the rest.
+    /// The quotes, then what was typed. Anything past the inline limit is written to the
+    /// attachment store and mentioned by path instead.
     private func composedPrompt(typed: String) -> String {
         guard !quotes.isEmpty else { return typed }
 
@@ -403,8 +381,6 @@ final class AppModel: Identifiable {
         return QuotePrompt.compose(quotes: quotes, spilled: spilled, typed: typed)
     }
 
-    /// Named for what it holds, so a spilled quote is recognisable in the agent's reading list
-    /// rather than being one more opaque temporary file.
     private static func quoteFileName(for quote: QuotedSelection) -> String {
         switch quote.source {
         case .file(let path, _), .patch(let path):
@@ -1430,8 +1406,7 @@ final class AppModel: Identifiable {
         let text = composedPrompt(typed: typed)
         if !text.isEmpty {
             pendingPrompt = text
-            // History is for retyping, so it holds what was typed rather than the quote blocks
-            // wrapped around it.
+            // History holds what was typed, not the quote blocks around it.
             if !typed.isEmpty { recordHistory(typed) }
             promptDraft = ""
             clearQuotes()
