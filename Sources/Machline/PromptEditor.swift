@@ -201,6 +201,23 @@ final class PromptTextView: NSTextView {
         ]
     }
 
+    /// Return sends; Shift-Return and Option-Return break the line.
+    ///
+    /// Only the bare key is the send key, which is what every chat input does and what an operator
+    /// coming from one expects. Shift-Return already arrived as
+    /// `insertNewlineIgnoringFieldEditor:`, but Option-Return did not: AppKit treats it as an
+    /// unbound chord and beeps, so a multi-line message could only be written one way. Both are
+    /// claimed here, before `interpretKeyEvents` gets a say, so the two agree.
+    override func keyDown(with event: NSEvent) {
+        let isReturn = event.keyCode == 36 || event.keyCode == 76
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if isReturn, modifiers.contains(.shift) || modifiers.contains(.option) {
+            insertText("\n", replacementRange: selectedRange())
+            return
+        }
+        super.keyDown(with: event)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // A key equivalent is offered to *every* view in the window before the focused one gets
         // `keyDown`, so claiming these unconditionally took them from the shell pane as well: the

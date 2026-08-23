@@ -173,6 +173,15 @@ struct GitWorkbenchView: View {
         !git.isDrafting && !(git.status?.staged.isEmpty ?? true)
     }
 
+    private var draftButtonHelp: String {
+        if git.isDrafting {
+            return "Stop writing. The run is killed and the session it made is removed."
+        }
+        return git.status?.staged.isEmpty ?? true
+            ? "Stage something first — the message is written from the staged diff"
+            : "Write a Conventional Commits message from the staged diff"
+    }
+
     private var repositoryPicker: some View {
         HStack(spacing: Theme.Space.sm) {
             Image(systemName: "shippingbox")
@@ -361,8 +370,15 @@ struct GitWorkbenchView: View {
 
                 // Reads the staged diff and writes a Conventional Commits message for it.
                 // Disabled with nothing staged, because there would be nothing to describe.
+                // Writing is the one state the button does not repeat itself in: it stops the run
+                // instead. A draft that turns out to be unwanted — the wrong files staged, the
+                // wrong session forked — should not have to be waited out.
                 Button {
-                    git.generateDraft(fork: model.commitDraftFork)
+                    if git.isDrafting {
+                        git.cancelDraft()
+                    } else {
+                        git.generateDraft(fork: model.commitDraftFork)
+                    }
                 } label: {
                     HStack(spacing: Theme.Space.xs) {
                         if git.isDrafting {
@@ -371,24 +387,26 @@ struct GitWorkbenchView: View {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 10))
                         }
-                        Text(git.isDrafting ? "Writing…" : "Suggest")
+                        Text(git.isDrafting ? "Stop" : "Suggest")
                             .font(Theme.Typography.meta)
                     }
-                    .foregroundStyle(canDraft ? Theme.Colors.accent : Theme.Colors.subtle)
+                    .foregroundStyle(git.isDrafting || canDraft
+                        ? Theme.Colors.accent
+                        : Theme.Colors.subtle)
                     .padding(.horizontal, Theme.Space.sm)
                     .padding(.vertical, 3)
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
                             .strokeBorder(
-                                canDraft ? Theme.Colors.accent.opacity(0.5) : Theme.Colors.border,
+                                git.isDrafting || canDraft
+                                    ? Theme.Colors.accent.opacity(0.5)
+                                    : Theme.Colors.border,
                                 lineWidth: 1))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!canDraft)
-                .help(git.status?.staged.isEmpty ?? true
-                    ? "Stage something first — the message is written from the staged diff"
-                    : "Write a Conventional Commits message from the staged diff")
+                .disabled(!git.isDrafting && !canDraft)
+                .help(draftButtonHelp)
             }
 
             if let draftError = git.draftError {

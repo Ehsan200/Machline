@@ -39,6 +39,9 @@ final class GitPanelModel {
     /// Why the last draft did not arrive. A spinner that stops and leaves the field as it was is
     /// indistinguishable from a button that does nothing.
     private(set) var draftError: String?
+    /// The draft in flight, kept so it can be stopped. Not observed by any view — the spinner
+    /// reads `isDrafting` — so it is deliberately outside the observable surface.
+    @ObservationIgnored private var draftTask: Task<Void, Never>?
 
     // MARK: Remote
 
@@ -435,21 +438,41 @@ final class GitPanelModel {
         guard !isDrafting else { return }
         isDrafting = true
         draftError = nil
-        Task { [manager] in
+        draftTask = Task { [manager] in
             do {
                 let generated = try await CommitDraftGenerator(fork: fork).draft(for: manager)
                 await MainActor.run {
                     self.isDrafting = false
+                    self.draftTask = nil
                     self.commitDraft = generated
+                }
+            } catch is CancellationError {
+                // Stopping was asked for, so it is not a failure to report back.
+                await MainActor.run {
+                    self.isDrafting = false
+                    self.draftTask = nil
                 }
             } catch {
                 let message = Self.describe(draftError: error)
                 await MainActor.run {
                     self.isDrafting = false
+                    self.draftTask = nil
                     self.draftError = message
                 }
             }
         }
+    }
+
+    /// Stops a draft in flight.
+    ///
+    /// The wait is not the only thing that ends: cancelling kills the `claude` the draft is
+    /// running, and the run deletes the transcript the CLI recorded for it, so a draft nobody
+    /// wanted leaves neither a process nor a session behind.
+    func cancelDraft() {
+        guard let draftTask else { return }
+        draftTask.cancel()
+        self.draftTask = nil
+        isDrafting = false
     }
 
     func dismissDraftError() {

@@ -265,12 +265,23 @@ public struct CommitDraftGenerator: Sendable {
         // Drafting is a one-shot question, not a conversation the operator will return to — but
         // the CLI records every run as a session, and a run in the repository would file it under
         // that project and put it in the session list. A cold run therefore happens in a scratch
-        // directory under a known id; a fork has to run where the conversation it forks is filed,
-        // so its transcript is found by the id the CLI reports back and deleted afterwards.
+        // directory; a fork has to run where the conversation it forks is filed, so its transcript
+        // is deleted out of that project instead.
+        //
+        // Both are given an id of our choosing. The fork used to take whatever id the CLI minted
+        // and be removed by the one it reported back, which meant a run that never reported —
+        // cancelled, killed, crashed — left its transcript in the operator's session list with no
+        // way to know which one it was. Naming it up front makes the cleanup unconditional.
         let scratch = fork == nil ? try Self.makeScratchDirectory() : nil
         let sessionID = UUID()
         defer {
-            if let scratch { Self.discardTranscript(sessionID: sessionID, scratch: scratch) }
+            if let scratch {
+                Self.discardTranscript(sessionID: sessionID, scratch: scratch)
+            } else if let fork {
+                Self.discardForkedTranscript(
+                    sessionID: sessionID.uuidString.lowercased(),
+                    workingDirectory: fork.workingDirectory)
+            }
         }
 
         let process = Process()
@@ -287,25 +298,8 @@ public struct CommitDraftGenerator: Sendable {
         }
         process.environment = SessionSupervisor.inheritedEnvironment()
 
-        var arguments = [
-            "-p",
-            "--output-format", "json",
-            "--json-schema", Self.schema,
-            // A drafting call has no business reading the operator's settings or touching tools.
-            "--setting-sources", "",
-            "--strict-mcp-config",
-            "--tools", ""
-        ]
-        if let fork {
-            // `--fork-session` branches off rather than continuing the operator's conversation, so
-            // the session they are working in is left exactly as it was.
-            arguments += ["--resume", fork.sessionID, "--fork-session"]
-        } else {
-            arguments += ["--session-id", sessionID.uuidString.lowercased()]
-            if let model { arguments += ["--model", model] }
-        }
-        if let effort, !effort.isEmpty { arguments += ["--effort", effort] }
-        process.arguments = arguments
+        process.arguments = Self.arguments(
+            sessionID: sessionID, fork: fork, model: model, effort: effort)
         // A cold run gets the scratch directory: the diff is already in the prompt, and
         // `--tools ""` means nothing here needs to see the working tree. A fork runs in the
         // repository, because that is where its conversation lives.
@@ -316,17 +310,35 @@ public struct CommitDraftGenerator: Sendable {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        // Stopping a draft has to stop the child, not just the task waiting on it: the reads below
+        // block until the pipes hit EOF, and nothing else closes them. Killing the process is what
+        // ends them — and the `defer` above then takes the transcript with it, so a cancelled
+        // draft leaves no session behind.
+        let running = RunningProcess()
         do {
-            try process.run()
+            try Task.checkCancellation()
+            try running.run(process)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw Failure.generationFailed(String(describing: error))
         }
-        try? stdinPipe.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
-        try? stdinPipe.fileHandleForWriting.close()
 
-        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        let (outData, errData) = await withTaskCancellationHandler {
+            try? stdinPipe.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
+            try? stdinPipe.fileHandleForWriting.close()
+
+            let out = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            let err = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return (out, err)
+        } onCancel: {
+            running.terminate()
+        }
+
+        // A killed run exits non-zero with nothing useful on stderr, so cancellation is reported
+        // as cancellation rather than as a failure the operator has to read and dismiss.
+        try Task.checkCancellation()
 
         guard process.terminationStatus == 0 else {
             throw Failure.generationFailed(String(decoding: errData, as: UTF8.self))
@@ -338,6 +350,71 @@ public struct CommitDraftGenerator: Sendable {
             Self.discardForkedTranscript(sessionID: forked, workingDirectory: fork.workingDirectory)
         }
         return try Self.parseResponse(response)
+    }
+
+    /// A child process a cancellation handler can reach.
+    ///
+    /// `onCancel` runs on whichever thread cancelled, and it can fire before the process has been
+    /// launched at all. The lock is what makes both safe: the handler either finds a process and
+    /// kills it, or finds none and leaves a mark that stops it ever starting.
+    final class RunningProcess: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+        private var isCancelled = false
+
+        func run(_ process: Process) throws {
+            lock.lock()
+            let alreadyCancelled = isCancelled
+            lock.unlock()
+            if alreadyCancelled { throw CancellationError() }
+
+            try process.run()
+
+            lock.lock()
+            self.process = process
+            let cancelledWhileStarting = isCancelled
+            lock.unlock()
+            // Cancelled between the check and the launch: kill what was just started.
+            if cancelledWhileStarting { process.terminate() }
+        }
+
+        func terminate() {
+            lock.lock()
+            isCancelled = true
+            let running = process
+            lock.unlock()
+            if let running, running.isRunning { running.terminate() }
+        }
+    }
+
+    /// The command line for one drafting run.
+    ///
+    /// Pure, so what the CLI is actually asked for can be checked without launching it.
+    static func arguments(
+        sessionID: UUID, fork: Fork?, model: String?, effort: String?
+    ) -> [String] {
+        var arguments = [
+            "-p",
+            "--output-format", "json",
+            "--json-schema", schema,
+            // A drafting call has no business reading the operator's settings or touching tools.
+            "--setting-sources", "",
+            "--strict-mcp-config",
+            "--tools", "",
+            // Ours on both paths, so the transcript can be removed without waiting to be told
+            // where it went.
+            "--session-id", sessionID.uuidString.lowercased()
+        ]
+        if let fork {
+            // `--fork-session` branches off rather than continuing the operator's conversation, so
+            // the session they are working in is left exactly as it was. The model is left alone
+            // with it: overriding it on a fork throws the warm cache away.
+            arguments += ["--resume", fork.sessionID, "--fork-session"]
+        } else if let model {
+            arguments += ["--model", model]
+        }
+        if let effort, !effort.isEmpty { arguments += ["--effort", effort] }
+        return arguments
     }
 
     /// The id the run was actually recorded under, from the `json` envelope.
