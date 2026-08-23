@@ -303,19 +303,48 @@ struct TimelineView: View {
     /// stops a hair short still counts as being at the end.
     private static let bottomSlack: CGFloat = 24
 
+    /// Selecting part of the conversation offers to quote it. ⌘⇧' does the same thing, but a
+    /// shortcut is not an affordance: with text highlighted and no button in sight, the feature may
+    /// as well not exist.
+    @State private var selectionWatcher = TextSelectionWatcher()
+
     var body: some View {
         ScrollViewReader { proxy in
             timeline(proxy)
                 .overlay(alignment: .bottom) {
-                    // `hasSettled` keeps the pill off a conversation that is still finding its
-                    // foot: until the opening jump lands, "not at the bottom" is only true because
-                    // nothing has been measured yet.
-                    if !isAtBottom, hasSettled {
-                        jumpToLatest(proxy)
-                            .padding(.bottom, Theme.Space.md)
+                    VStack(spacing: Theme.Space.sm) {
+                        if let selection = selectionWatcher.selection {
+                            quoteSelection(selection)
+                        }
+                        // `hasSettled` keeps the pill off a conversation that is still finding its
+                        // foot: until the opening jump lands, "not at the bottom" is only true
+                        // because nothing has been measured yet.
+                        if !isAtBottom, hasSettled {
+                            jumpToLatest(proxy)
+                        }
                     }
+                    .padding(.bottom, Theme.Space.md)
                 }
+                .onAppear { selectionWatcher.start() }
+                .onDisappear { selectionWatcher.stop() }
         }
+    }
+
+    /// The pill offered over a live selection. Placed with the jump-to-latest pill rather than
+    /// beside the text: SwiftUI will not say where a selection is on screen, and a control that
+    /// guesses at the position would sit over the words it is offering to quote.
+    private func quoteSelection(_ text: String) -> some View {
+        Pill(
+            title: "Quote selection",
+            detail: "⌘⇧'",
+            systemImage: "text.quote",
+            isProminent: true,
+            help: "Pin the selected text to your next message"
+        ) {
+            model.quote(text, from: .selection)
+            selectionWatcher.clear()
+        }
+        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
     }
 
     /// The pill shown when there is more below: says how much, and goes there.

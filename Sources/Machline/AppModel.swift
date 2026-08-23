@@ -352,19 +352,12 @@ final class AppModel: Identifiable {
     }
 
     /// Quotes the window's selection. SwiftUI's selectable `Text` exposes no selection API, so it
-    /// is taken through `copy:` and the pasteboard is put back as it was found.
+    /// is taken through `copy:` and the pasteboard is put back as it was found — see
+    /// `PasteboardProbe`, which the selection pill reads through as well.
     func quoteSelection() {
-        let board = NSPasteboard.general
-        let previous = board.string(forType: .string)
-        let mark = board.changeCount
-        guard NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) else { return }
-
-        // A turn later: the responder handling `copy:` may write after the send returns.
         Task { @MainActor in
-            guard board.changeCount != mark, let taken = board.string(forType: .string) else { return }
+            guard let taken = await PasteboardProbe.readSelection() else { return }
             quote(taken, from: .selection)
-            board.clearContents()
-            if let previous { board.setString(previous, forType: .string) }
         }
     }
 
