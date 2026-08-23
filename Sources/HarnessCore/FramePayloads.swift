@@ -311,6 +311,39 @@ public struct TaskNotification: Sendable, Hashable {
     }
 }
 
+/// What a task status word means for the agent's lifecycle.
+///
+/// The CLI's vocabulary here is open-ended — probe runs have produced `completed`, `killed`, and
+/// `stopped`, and interrupting a session yields the last two with no other announcement. Matching
+/// only the words already seen is what left a killed subagent reading "Thinking" for the rest of
+/// the session, so the enumerated set is the one that means *still running*: anything outside it
+/// ends the agent, and an unrecognised word is reported rather than ignored.
+public enum TaskOutcome: Sendable, Hashable {
+    case running
+    case completed
+    /// Ended by something other than its own work — killed, cancelled, interrupted.
+    case stopped(String)
+    case failed(String)
+
+    public init(status: String) {
+        switch status.lowercased() {
+        case "", "running", "pending", "queued", "in_progress", "started", "active", "resumed":
+            self = .running
+        case "completed", "complete", "success", "succeeded", "done", "finished":
+            self = .completed
+        case "killed", "stopped", "cancelled", "canceled", "aborted", "interrupted":
+            self = .stopped(status)
+        default:
+            self = .failed(status)
+        }
+    }
+
+    public var isRunning: Bool {
+        if case .running = self { return true }
+        return false
+    }
+}
+
 public struct BackgroundTask: Sendable, Hashable {
     public let taskID: String
     public let taskType: String

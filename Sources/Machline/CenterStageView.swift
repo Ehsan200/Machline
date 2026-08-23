@@ -307,7 +307,10 @@ struct TimelineView: View {
         ScrollViewReader { proxy in
             timeline(proxy)
                 .overlay(alignment: .bottom) {
-                    if !isAtBottom {
+                    // `hasSettled` keeps the pill off a conversation that is still finding its
+                    // foot: until the opening jump lands, "not at the bottom" is only true because
+                    // nothing has been measured yet.
+                    if !isAtBottom, hasSettled {
                         jumpToLatest(proxy)
                             .padding(.bottom, Theme.Space.md)
                     }
@@ -392,7 +395,8 @@ struct TimelineView: View {
             }
             .coordinateSpace(name: Self.scrollSpace)
             .onPreferenceChange(TimelineFootKey.self) { footY in
-                let reached = footY <= viewport.size.height + Self.bottomSlack
+                let reached = footY != TimelineFootKey.unmeasured
+                    && footY <= viewport.size.height + Self.bottomSlack
                 guard reached != isAtBottom else { return }
                 isAtBottom = reached
                 if reached { unseenCount = 0 }
@@ -472,7 +476,15 @@ struct TimelineView: View {
 
 /// Carries the foot of the timeline's position out of the scroll view.
 private struct TimelineFootKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
+    /// What the key reads when nothing is reporting a foot position.
+    ///
+    /// The anchor lives at the end of a `LazyVStack`, so scrolling far enough up unrealises it and
+    /// its contribution disappears. A default of zero read as "the foot is at the very top of the
+    /// scroll view", which is indistinguishable from being parked at the end — so every arriving
+    /// frame dragged a reader three screens up back down to the bottom. Off the scale in the other
+    /// direction is the honest answer: the foot is not measurable, therefore not on screen.
+    static let unmeasured = CGFloat.greatestFiniteMagnitude
+    static let defaultValue = unmeasured
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }

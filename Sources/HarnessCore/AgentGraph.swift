@@ -42,6 +42,10 @@ public struct AgentGraph: Sendable {
     /// when the root appears, or the opening message of a session would exist only in the CLI's
     /// echo of it.
     private var steersAwaitingRoot: [String] = []
+    /// How many `background_tasks_changed` snapshots have been seen, and per subagent how many of
+    /// the most recent ones left it out. See `reconcileAbandonedTasks`.
+    private var backgroundSnapshots = 0
+    private var absentSnapshots: [String: Int] = [:]
     private var idGenerator: @Sendable () -> UUID
 
     /// - Parameter idGenerator: overridable so tests can assert on stable transcript ids.
@@ -139,12 +143,7 @@ public struct AgentGraph: Sendable {
 
         case .taskUpdated(let update):
             guard let id = nodeID(forTaskID: update.taskID) else { break }
-            switch update.status {
-            case "completed": transition(id, to: .completed, changes: &changes)
-            case "failed", "error": transition(id, to: .errored("Task failed"), changes: &changes)
-            case "cancelled": transition(id, to: .cancelled, changes: &changes)
-            default: break
-            }
+            finish(id, outcome: TaskOutcome(status: update.status ?? ""), changes: &changes)
 
         case .taskNotification(let notification):
             guard let id = nodeID(forTaskID: notification.taskID) else { break }
@@ -152,16 +151,14 @@ public struct AgentGraph: Sendable {
             nodes[id]?.telemetry.durationMS = notification.durationMS
             if let toolUses = notification.toolUses { nodes[id]?.telemetry.toolUseCount = toolUses }
             changes.append(.telemetryUpdated(id: id))
-            if notification.status == "completed", nodes[id]?.state.isTerminal == false {
-                transition(id, to: .completed, changes: &changes)
-            }
+            finish(id, outcome: TaskOutcome(status: notification.status), changes: &changes)
 
-        case .backgroundTasksChanged:
-            // Snapshot used only for reconciliation; task_started/updated carry the detail.
-            break
+        case .backgroundTasksChanged(let tasks):
+            noteBackgroundTasks(tasks)
 
         case .result(let result):
             apply(turnResult: result, to: ownerID, changes: &changes)
+            reconcileAbandonedTasks(changes: &changes)
 
         case .streamEvent(let eventType, let event):
             apply(streamEvent: eventType, event: event, to: ownerID, changes: &changes)
@@ -171,6 +168,53 @@ public struct AgentGraph: Sendable {
         }
 
         return changes
+    }
+
+    // MARK: - Task lifecycle
+
+    /// Applies a task's reported status. A status that is not one of the running words ends the
+    /// agent — see `TaskOutcome`.
+    private mutating func finish(
+        _ id: String, outcome: TaskOutcome, changes: inout [GraphChange]
+    ) {
+        guard nodes[id]?.state.isTerminal == false else { return }
+        switch outcome {
+        case .running:
+            break
+        case .completed:
+            transition(id, to: .completed, changes: &changes)
+        case .stopped(let status):
+            transition(id, to: .cancelled, changes: &changes)
+            append(.incident(id: idGenerator(), text: "The agent was \(status) before it reported."),
+                   to: id, changes: &changes)
+        case .failed(let status):
+            transition(id, to: .errored("Task \(status)"), changes: &changes)
+        }
+    }
+
+    /// Tracks how many consecutive live-task snapshots a subagent has been missing from.
+    ///
+    /// The snapshot is the CLI's own list of what is still running, and it drops a task a moment
+    /// before the status frames for it arrive — so absence alone means nothing. Absence that
+    /// outlives a second snapshot *and* a turn boundary is a task that ended without saying so.
+    private mutating func noteBackgroundTasks(_ tasks: [BackgroundTask]) {
+        backgroundSnapshots += 1
+        let live = Set(tasks.map(\.taskID))
+        for (id, node) in nodes where !node.isRoot && !node.state.isTerminal {
+            absentSnapshots[id] = live.contains(id) ? 0 : (absentSnapshots[id] ?? 0) + 1
+        }
+    }
+
+    /// Ends the agents the CLI has stopped listing and never reported on.
+    ///
+    /// Without this, a subagent killed with no `task_updated` behind it reads as "Thinking" for the
+    /// rest of the session — the one thing an operator watching a fleet cannot afford to misread.
+    private mutating func reconcileAbandonedTasks(changes: inout [GraphChange]) {
+        guard backgroundSnapshots >= 2 else { return }
+        for (id, absences) in absentSnapshots.sorted(by: { $0.key < $1.key }) where absences >= 2 {
+            guard let node = nodes[id], !node.isRoot, !node.state.isTerminal else { continue }
+            transition(id, to: .errored("Stopped without reporting a result"), changes: &changes)
+        }
     }
 
     // MARK: - Steering

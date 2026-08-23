@@ -54,6 +54,13 @@ canary for frame-schema drift.
    billing to the API silently, so subscription mode removes it from the child's environment.
 8. **The CLI writes to a transcript when a session is opened,** so its modification time is not
    when the conversation last had a message in it.
+9. **A killed subagent says only `killed`/`stopped`.** Interrupting a session mid-task produced
+   `task_updated` with `patch.status: "killed"` and `task_notification` with `status: "stopped"` —
+   and nothing else. Matching the statuses already seen (`completed`, `failed`, `cancelled`) left a
+   dead agent reading "Thinking" for the rest of the session, so the *running* words are what is
+   enumerated now and every other status ends the agent. `background_tasks_changed` backs this up:
+   the CLI drops a task from that list one frame before its status arrives, so absence is a verdict
+   only once it has outlived a second snapshot and a turn boundary.
 
 ## Files the agent may read
 

@@ -97,6 +97,91 @@ struct AgentGraphTests {
         #expect(!root.state.isTerminal)
     }
 
+    // MARK: - Subagents that stop
+
+    /// The frames below are the shapes an interrupted session produced against the real CLI: the
+    /// only announcement a killed agent gets is a `killed` status on `task_updated` and a `stopped`
+    /// one on `task_notification`. Matching `completed`/`failed`/`cancelled` alone left it
+    /// "Thinking" forever, with nothing on screen to say the work had stopped.
+    static func graphWithSubagent() throws -> AgentGraph {
+        var graph = AgentGraph()
+        graph.apply(frame: try frame(
+            #"{"type":"system","subtype":"task_started","task_id":"t1","tool_use_id":"toolu_1","description":"Wait for docker build","subagent_type":"general-purpose","task_type":"local_agent","session_id":"s","uuid":"u1"}"#))
+        return graph
+    }
+
+    @Test("A killed subagent ends as cancelled, not left thinking")
+    func killedSubagentIsSurfaced() throws {
+        var graph = try Self.graphWithSubagent()
+        #expect(graph.node(id: "t1")?.state == .thinking)
+
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"task_updated","task_id":"t1","patch":{"status":"killed","end_time":1787478239507},"session_id":"s","uuid":"u2"}"#))
+
+        let child = try #require(graph.node(id: "t1"))
+        #expect(child.state == .cancelled)
+        #expect(child.transcript.contains {
+            if case .incident(_, let text) = $0 { return text.contains("killed") }
+            return false
+        })
+    }
+
+    @Test("A stopped task notification ends the subagent")
+    func stoppedNotificationIsSurfaced() throws {
+        var graph = try Self.graphWithSubagent()
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"task_notification","task_id":"t1","tool_use_id":"toolu_1","status":"stopped","summary":"Wait for docker build","session_id":"s","uuid":"u2"}"#))
+        #expect(graph.node(id: "t1")?.state == .cancelled)
+    }
+
+    @Test("An unrecognised task status ends the agent and names itself")
+    func unknownStatusEndsTheAgent() throws {
+        var graph = try Self.graphWithSubagent()
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"task_updated","task_id":"t1","patch":{"status":"evicted"},"session_id":"s","uuid":"u2"}"#))
+        #expect(graph.node(id: "t1")?.state == .errored("Task evicted"))
+    }
+
+    /// The backstop for a kill that announces nothing at all: the CLI stops listing the task, and
+    /// the next turn boundary finds it still running with no status behind it.
+    @Test("A subagent the CLI stopped listing is ended at the next turn boundary")
+    func vanishedSubagentIsReconciled() throws {
+        var graph = try Self.graphWithSubagent()
+        let live =
+            #"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"t1","task_type":"local_agent","description":"Wait for docker build"}],"session_id":"s","uuid":"u2"}"#
+        let empty =
+            #"{"type":"system","subtype":"background_tasks_changed","tasks":[],"session_id":"s","uuid":"u3"}"#
+        let turnEnd =
+            #"{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","uuid":"u4"}"#
+
+        graph.apply(frame: try Self.frame(live))
+        graph.apply(frame: try Self.frame(turnEnd))
+        #expect(graph.node(id: "t1")?.state == .thinking, "A listed agent survives a turn boundary")
+
+        // One absence is the snapshot running a moment ahead of the status frames, not a death.
+        graph.apply(frame: try Self.frame(empty))
+        graph.apply(frame: try Self.frame(turnEnd))
+        #expect(graph.node(id: "t1")?.state == .thinking, "One missed snapshot is not a verdict")
+
+        graph.apply(frame: try Self.frame(empty))
+        graph.apply(frame: try Self.frame(turnEnd))
+        #expect(graph.node(id: "t1")?.state == .errored("Stopped without reporting a result"))
+    }
+
+    @Test("A subagent that reported completion is never second-guessed by the snapshot")
+    func completedSubagentSurvivesReconciliation() throws {
+        var graph = try Self.graphWithSubagent()
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"task_updated","task_id":"t1","patch":{"status":"completed"},"session_id":"s","uuid":"u2"}"#))
+        for uuid in ["u3", "u4", "u5"] {
+            graph.apply(frame: try Self.frame(
+                #"{"type":"system","subtype":"background_tasks_changed","tasks":[],"session_id":"s","uuid":"\#(uuid)"}"#))
+            graph.apply(frame: try Self.frame(
+                #"{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","uuid":"\#(uuid)r"}"#))
+        }
+        #expect(graph.node(id: "t1")?.state == .completed)
+    }
+
     // MARK: - Tool execution
 
     @Test("A tool call moves the agent through executing and back")
