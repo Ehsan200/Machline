@@ -35,6 +35,13 @@ public struct AgentGraph: Sendable {
     /// The last assistant message whose usage was counted, per agent. Frames repeat a message's
     /// usage once per content block.
     private var lastCountedMessageID: [String: String] = [:]
+    /// Steers written to stdin before the first frame created the root node.
+    ///
+    /// The prompt typed to start a session is sent the moment the process is up, which is before
+    /// the CLI has said anything — so there is no node to hang it on yet. Held here and appended
+    /// when the root appears, or the opening message of a session would exist only in the CLI's
+    /// echo of it.
+    private var steersAwaitingRoot: [String] = []
     private var idGenerator: @Sendable () -> UUID
 
     /// - Parameter idGenerator: overridable so tests can assert on stable transcript ids.
@@ -105,7 +112,7 @@ public struct AgentGraph: Sendable {
 
         case .hookResponse(let response):
             if response.indicatesFailOpen {
-                nodes[ownerID]?.hasFailOpenIncident = true
+                nodes[ownerID]?.failOpenIncidentCount += 1
                 let toolName = currentToolName(for: ownerID) ?? response.hookName
                 append(
                     .incident(
@@ -173,23 +180,40 @@ public struct AgentGraph: Sendable {
     @discardableResult
     public mutating func noteSteerQueued(text: String, agentID: String? = nil) -> [GraphChange] {
         var changes: [GraphChange] = []
-        guard let id = agentID ?? rootID else { return changes }
+        guard let id = agentID ?? rootID else {
+            steersAwaitingRoot.append(text)
+            return changes
+        }
         append(.steerQueued(id: idGenerator(), text: text), to: id, changes: &changes)
         return changes
     }
 
     /// Marks the earliest matching queued steer as delivered.
+    ///
+    /// The echo does not always repeat what was written: a prompt that mentioned an image comes
+    /// back with the mention replaced by an `[Image #1]` marker over a block of base64. Steers are
+    /// consumed in the order they were written, so `byOrder` lets such an echo fall back to the
+    /// oldest one still queued — and the row keeps the text the operator actually typed, which is
+    /// the version that still names a file on disk to draw.
+    @discardableResult
     private mutating func markSteerDelivered(
-        text: String, on agentID: String, changes: inout [GraphChange]
+        text: String?, byOrder: Bool = false, on agentID: String, changes: inout [GraphChange]
     ) -> Bool {
         guard var node = nodes[agentID] else { return false }
-        guard let index = node.transcript.firstIndex(where: {
-            if case .steerQueued(_, let queued) = $0 { return queued == text }
-            return false
-        }) else { return false }
+        let exact = text.flatMap { text in
+            node.transcript.firstIndex {
+                if case .steerQueued(_, let queued) = $0 { return queued == text }
+                return false
+            }
+        }
+        let oldest = byOrder
+            ? node.transcript.firstIndex { if case .steerQueued = $0 { return true } else { return false } }
+            : nil
+        guard let index = exact ?? oldest else { return false }
 
+        guard case .steerQueued(_, let queued) = node.transcript[index] else { return false }
         let entryID = node.transcript[index].id
-        node.transcript[index] = .steerDelivered(id: entryID, text: text)
+        node.transcript[index] = .steerDelivered(id: entryID, text: queued)
         nodes[agentID] = node
         changes.append(.transcriptAppended(id: agentID, entryID: entryID))
         return true
@@ -340,8 +364,18 @@ public struct AgentGraph: Sendable {
     ) {
         // The replay of an injected steer, confirming the agent consumed it.
         if userMessage.isReplayedUserInput {
-            for case .text(let text) in userMessage.content {
-                if !markSteerDelivered(text: text, on: ownerID, changes: &changes) {
+            let texts = userMessage.replayedText
+            // The CLI rewrites the text of a message it attached files to, so only those echoes are
+            // allowed to match a queued steer they do not read like.
+            let wasRewritten = texts.count != userMessage.content.count
+            // An image with nothing typed alongside it still confirms the steer it came from.
+            guard !texts.isEmpty else {
+                markSteerDelivered(text: nil, byOrder: true, on: ownerID, changes: &changes)
+                return
+            }
+            for text in texts {
+                if !markSteerDelivered(
+                    text: text, byOrder: wasRewritten, on: ownerID, changes: &changes) {
                     append(.steerDelivered(id: idGenerator(), text: text),
                            to: ownerID, changes: &changes)
                 }
@@ -409,6 +443,10 @@ public struct AgentGraph: Sendable {
         nodes[sessionID] = node
         rootID = sessionID
         changes.append(.nodeAdded(id: sessionID))
+        for steer in steersAwaitingRoot {
+            append(.steerQueued(id: idGenerator(), text: steer), to: sessionID, changes: &changes)
+        }
+        steersAwaitingRoot = []
         return sessionID
     }
 

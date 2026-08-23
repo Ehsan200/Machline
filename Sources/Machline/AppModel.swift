@@ -85,6 +85,14 @@ final class AppModel: Identifiable {
     private(set) var failOpenIncidents: [String] = []
     /// Raised when the approval channel itself fails. While this is set, the gate is degraded.
     private(set) var approvalChannelFailure: String?
+    /// Per agent, the fail-open count the operator has already dismissed the banner at.
+    ///
+    /// `failOpenIncidents` is re-derived from the graph on every refresh, so clearing it alone put
+    /// the banner straight back on the next frame. Dismissal has to be remembered against
+    /// something the graph keeps, and it has to stay per-incident: another fail-open on the same
+    /// agent takes its count past what was dismissed and the banner returns, which is the point of
+    /// the banner. Cleared with the graph in `startSession`.
+    private var dismissedFailOpenCounts: [String: Int] = [:]
 
     /// The permission rules the operator's own `~/.claude/settings.json` imposes.
     ///
@@ -1156,6 +1164,10 @@ final class AppModel: Identifiable {
         guard session == nil, let workspace else { return }
         sessionState = .starting
         graph = AgentGraph()
+        // The ids these are keyed by belong to the graph that has just been thrown away.
+        failOpenIncidents = []
+        approvalChannelFailure = nil
+        dismissedFailOpenCounts = [:]
         selectedAgentID = nil
         lastTurn = nil
         cumulativeCostUSD = 0
@@ -1370,7 +1382,7 @@ final class AppModel: Identifiable {
         // Sorted because `nodes` is a dictionary: unordered, this reshuffles the incident banner
         // between frames and never compares equal to the list it just replaced.
         let incidents = snapshot.nodes.values
-            .filter(\.hasFailOpenIncident)
+            .filter { $0.failOpenIncidentCount > dismissedFailOpenCounts[$0.id, default: 0] }
             .sorted { $0.id < $1.id }
             .map { "Agent \($0.title) ran a command without approval." }
         // Assigning an equal array still invalidates every view observing it, and this is
@@ -1508,7 +1520,11 @@ final class AppModel: Identifiable {
         }
     }
 
+    /// Takes the banner down for the incidents on screen, and only those.
     func dismissIncidents() {
+        for node in graph.nodes.values where node.failOpenIncidentCount > 0 {
+            dismissedFailOpenCounts[node.id] = node.failOpenIncidentCount
+        }
         failOpenIncidents.removeAll()
         approvalChannelFailure = nil
     }

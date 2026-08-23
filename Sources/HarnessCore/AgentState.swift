@@ -119,9 +119,15 @@ public struct AgentNode: Sendable, Equatable, Identifiable {
     /// Capability snapshot from the most recent `system/init`. Re-emitted mid-session when the tool
     /// set changes, so this is replaced rather than merged (docs/RUNTIME.md).
     public var capabilities: SessionInit?
-    /// Set when a `PreToolUse` hook was cancelled by the runtime, meaning a command ran unapproved
-    /// (Finding 1). This is an incident, not a warning.
-    public var hasFailOpenIncident = false
+    /// How many times a `PreToolUse` hook was cancelled by the runtime, meaning a command ran
+    /// unapproved (Finding 1). These are incidents, not warnings.
+    ///
+    /// A count rather than a flag because the banner can be dismissed: the UI remembers the count
+    /// it dismissed at, so a *second* fail-open on the same agent raises the banner again while the
+    /// one already acknowledged stays down.
+    public var failOpenIncidentCount = 0
+
+    public var hasFailOpenIncident: Bool { failOpenIncidentCount > 0 }
     /// Assistant text arriving token by token, before the complete block lands.
     ///
     /// A preview, not a record: it is cleared as soon as the assembled `assistant` frame arrives,

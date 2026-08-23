@@ -164,9 +164,19 @@ public struct UserMessage: Sendable, Hashable {
 
     /// A `user` frame is either a tool result being fed back, or the echo of an injected steer
     /// (requires `--replay-user-messages`). The echo is what confirms a steer was consumed.
+    ///
+    /// Anything that is not a tool result is the operator's own message: a prompt that mentioned an
+    /// image comes back as a text block *and* an `image` block, and demanding text throughout made
+    /// that whole message read as a tool result and disappear.
     public var isReplayedUserInput: Bool {
-        content.allSatisfy { if case .text = $0 { return true } else { return false } }
-            && !content.isEmpty
+        !content.isEmpty && !content.contains {
+            if case .toolResult = $0 { return true } else { return false }
+        }
+    }
+
+    /// The text blocks of an echoed message, in order.
+    public var replayedText: [String] {
+        content.compactMap { if case .text(let text) = $0 { return text } else { return nil } }
     }
 }
 

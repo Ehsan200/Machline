@@ -164,6 +164,23 @@ struct AgentGraphTests {
             return nil
         }
         #expect(incidents.contains { $0.contains("without approval") })
+        #expect(root.failOpenIncidentCount == 1)
+    }
+
+    /// The incident banner can be dismissed, and the UI decides whether a dismissal still stands by
+    /// comparing counts. A flag could not tell a second fail-open from the one already acknowledged,
+    /// which is the one case the banner exists for.
+    @Test("Fail-open incidents accumulate rather than latching")
+    func failOpensAreCounted() throws {
+        var graph = AgentGraph()
+        let response =
+            #"{"type":"system","subtype":"hook_response","hook_name":"PreToolUse:Bash","hook_event":"PreToolUse","outcome":"cancelled","session_id":"s","uuid":"u1"}"#
+        graph.apply(frame: try Self.frame(response))
+        graph.apply(frame: try Self.frame(response))
+
+        let root = try #require(graph.root)
+        #expect(root.failOpenIncidentCount == 2)
+        #expect(root.hasFailOpenIncident)
     }
 
     @Test("Approval outcomes from the broker are recorded against the calling agent")
@@ -207,6 +224,48 @@ struct AgentGraphTests {
             return false
         })
         #expect(root.transcript.count == 1, "The queued entry is replaced, not duplicated")
+    }
+
+    /// The prompt that starts a session is written before the CLI has emitted anything, so there is
+    /// no root to hang it on yet. Dropped, the opening message of every session existed only in the
+    /// echo — and an echo carrying an image never arrives as one.
+    @Test("A steer written before the first frame still lands on the root")
+    func steerBeforeRootIsKept() throws {
+        var graph = AgentGraph()
+        graph.noteSteerQueued(text: "@/tmp/shot.png what is wrong here?")
+        #expect(graph.root == nil)
+
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"status","status":"requesting","session_id":"s","uuid":"u1"}"#))
+
+        let root = try #require(graph.root)
+        #expect(root.transcript.contains {
+            if case .steerQueued(_, let text) = $0 { return text == "@/tmp/shot.png what is wrong here?" }
+            return false
+        })
+    }
+
+    /// A prompt that mentioned an image echoes back as text *plus* an `image` block, and with the
+    /// mention rewritten to `[Image #1]`. Neither the block nor the rewrite may cost the operator
+    /// their message: the row stays, and it keeps the text that still names a file to draw.
+    @Test("An echo carrying an image delivers the steer it came from")
+    func imageEchoDeliversTheSteer() throws {
+        var graph = AgentGraph()
+        graph.noteSteerQueued(text: "@/tmp/shot.png what is wrong here?")
+        graph.apply(frame: try Self.frame(
+            #"{"type":"system","subtype":"status","status":"requesting","session_id":"s","uuid":"u1"}"#))
+
+        graph.apply(frame: try Self.frame(
+            #"{"type":"user","session_id":"s","uuid":"u2","message":{"role":"user","content":[{"type":"text","text":"[Image #1] what is wrong here?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}}"#))
+
+        let root = try #require(graph.root)
+        #expect(root.transcript.count == 1, "One message, not one row per content block")
+        #expect(root.transcript.contains {
+            if case .steerDelivered(_, let text) = $0 {
+                return text == "@/tmp/shot.png what is wrong here?"
+            }
+            return false
+        })
     }
 
     // MARK: - Lifecycle
