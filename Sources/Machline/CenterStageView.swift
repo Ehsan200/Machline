@@ -292,16 +292,24 @@ struct TimelineView: View {
     /// window flinging itself around.
     @State private var hasSettled = false
 
-    /// False while the operator has scrolled up. Two things hang off it: the jump-to-latest pill,
-    /// and the auto-scroll — a timeline that yanks itself to the foot while someone is reading
-    /// three screens up is worse than one that never scrolls at all.
-    @State private var isAtBottom = true
+    /// True while the timeline should keep itself pinned to the foot. Two things hang off it: the
+    /// jump-to-latest pill, and the auto-scroll — a timeline that yanks itself to the foot while
+    /// someone is reading three screens up is worse than one that never scrolls at all.
+    ///
+    /// It is deliberately *not* the same question as "is the foot on screen right now". Every
+    /// arriving frame pushes the foot below the viewport for a moment, and reading the two as the
+    /// same thing meant the first streamed token turned following off and left it off.
+    @State private var isFollowing = true
     /// How many events have landed since they scrolled away from the foot.
     @State private var unseenCount = 0
 
-    /// The bottom anchor is treated as reached within this many points, so a resting scroll that
-    /// stops a hair short still counts as being at the end.
+    /// The foot is treated as reached within this many points, so a resting scroll that stops a
+    /// hair short still counts as being at the end.
     private static let bottomSlack: CGFloat = 24
+
+    /// How far the content has to slide down the viewport before it counts as a drag back through
+    /// history rather than the sub-point drift of a relayout.
+    private static let dragSlop: CGFloat = 1
 
     /// Selecting part of the conversation offers to quote it. ⌘⇧' does the same thing, but a
     /// shortcut is not an affordance: with text highlighted and no button in sight, the feature may
@@ -319,7 +327,7 @@ struct TimelineView: View {
                         // `hasSettled` keeps the pill off a conversation that is still finding its
                         // foot: until the opening jump lands, "not at the bottom" is only true
                         // because nothing has been measured yet.
-                        if !isAtBottom, hasSettled {
+                        if !isFollowing, hasSettled {
                             jumpToLatest(proxy)
                         }
                     }
@@ -407,46 +415,52 @@ struct TimelineView: View {
                     Color.clear
                         .frame(height: 1)
                         .id(Self.bottomAnchor)
-                        // Where the foot of the conversation currently sits, in the scroll view's
-                        // own space. Compared against the viewport height, it says whether the end
-                        // is on screen — which `ScrollViewProxy` alone will not tell you.
-                        .background(
-                            GeometryReader { anchor in
-                                Color.clear.preference(
-                                    key: TimelineFootKey.self,
-                                    value: anchor.frame(in: .named(Self.scrollSpace)).minY)
-                            })
                 }
+                // Where the whole conversation sits inside the viewport, in the scroll view's own
+                // space — which `ScrollViewProxy` will not tell you. Both edges are read from one
+                // frame so they can be judged together: the foot says whether the end is on
+                // screen, and the head says whether the operator moved or the content grew.
+                .background(
+                    GeometryReader { content in
+                        let frame = content.frame(in: .named(Self.scrollSpace))
+                        Color.clear
+                            .onChange(of: frame, initial: true) { was, now in
+                                trackScroll(from: was, to: now, viewport: viewport.size.height)
+                            }
+                    })
                 .padding(.horizontal, Theme.Space.timelinePadding)
                 .padding(.top, Theme.Space.xl)
                 .padding(.bottom, Theme.Space.xl)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .coordinateSpace(name: Self.scrollSpace)
-            .onPreferenceChange(TimelineFootKey.self) { footY in
-                let reached = footY != TimelineFootKey.unmeasured
-                    && footY <= viewport.size.height + Self.bottomSlack
-                guard reached != isAtBottom else { return }
-                isAtBottom = reached
-                if reached { unseenCount = 0 }
-            }
             .scrollContentBackground(.hidden)
             // A conversation opens at its foot: the end is where the work is.
             .onChange(of: model.replay.count) { _, count in
                 guard count > 0 else { return }
                 hasSettled = false
                 unseenCount = 0
-                isAtBottom = true
+                isFollowing = true
                 scrollToBottom(proxy, animated: false)
             }
             .onChange(of: model.transcriptRevision) {
                 // Only follow the conversation for someone who is already at the end of it.
                 // Otherwise count what has arrived and let the pill offer the trip.
-                if isAtBottom {
+                if isFollowing {
                     scrollToBottom(proxy, animated: hasSettled)
                 } else {
                     unseenCount += 1
                 }
+            }
+            // The reply as it is written grows the timeline without touching the transcript, so it
+            // needs a follow of its own: the revision only bumps once the assembled block lands,
+            // and without this the whole answer types itself off the bottom of the screen.
+            //
+            // Never animated. This fires per streamed chunk, and an animation per chunk would
+            // queue curves on top of each other for as long as the reply runs.
+            .onChange(of: agent?.streamingText.count ?? 0) { _, length in
+                guard length > 0, isFollowing else { return }
+                scrollToBottom(proxy, animated: false)
             }
             // Re-pin when the viewport itself changes size — a rail being dragged, the composer or
             // the shell pane being resized, the window growing. Every one of those re-wraps the
@@ -454,7 +468,7 @@ struct TimelineView: View {
             // where it was, and the conversation appears to crawl up the screen under the pointer.
             // Someone parked mid-history keeps their place; someone at the foot stays at the foot.
             .onChange(of: viewport.size) {
-                guard isAtBottom else { return }
+                guard isFollowing else { return }
                 scrollToBottom(proxy, animated: false)
             }
             .onAppear { scrollToBottom(proxy, animated: false) }
@@ -463,6 +477,24 @@ struct TimelineView: View {
     }
 
     private static let scrollSpace = "timeline.scroll"
+
+    /// Decides, from one measurement to the next, whether the timeline should still be following
+    /// the foot of the conversation.
+    ///
+    /// The distinction the old reading missed: an arriving frame makes the content *taller*,
+    /// leaving its head exactly where it was, while dragging back through history slides the whole
+    /// content *down* the viewport. Only the second is the operator asking to be left alone —
+    /// treating the first as such meant the first streamed token switched auto-scroll off and
+    /// nothing ever switched it back on.
+    private func trackScroll(from was: CGRect, to now: CGRect, viewport: CGFloat) {
+        if now.maxY <= viewport + Self.bottomSlack {
+            // Parked at the end, however they got there: follow again, and there is nothing unseen.
+            if !isFollowing { isFollowing = true }
+            if unseenCount != 0 { unseenCount = 0 }
+        } else if isFollowing, now.minY > was.minY + Self.dragSlop {
+            isFollowing = false
+        }
+    }
 
     /// Scrolls to the foot.
     ///
@@ -501,22 +533,6 @@ struct TimelineView: View {
         .padding(.vertical, Theme.Space.xl)
     }
 
-}
-
-/// Carries the foot of the timeline's position out of the scroll view.
-private struct TimelineFootKey: PreferenceKey {
-    /// What the key reads when nothing is reporting a foot position.
-    ///
-    /// The anchor lives at the end of a `LazyVStack`, so scrolling far enough up unrealises it and
-    /// its contribution disappears. A default of zero read as "the foot is at the very top of the
-    /// scroll view", which is indistinguishable from being parked at the end — so every arriving
-    /// frame dragged a reader three screens up back down to the bottom. Off the scale in the other
-    /// direction is the honest answer: the foot is not measurable, therefore not on screen.
-    static let unmeasured = CGFloat.greatestFiniteMagnitude
-    static let defaultValue = unmeasured
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
 }
 
 struct TimelineEventView: View {
