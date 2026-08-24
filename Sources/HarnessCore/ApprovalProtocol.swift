@@ -133,10 +133,20 @@ public struct ApprovalDecision: Sendable, Hashable, Codable {
     /// Every failure path in the helper and the broker funnels here. This is the single most
     /// important behaviour in the interception design: the runtime's own timeout lets the command
     /// through (Finding 1), so *not answering* is never an acceptable outcome.
+    /// The wording separates a decision from an outage. "Blocked" reads as a rule having refused
+    /// the command, and sends whoever hits it looking for the rule — but most of these paths are
+    /// the gate being unreachable or out of time, where there is no rule and nothing to change.
     public static func failClosed(_ provenance: Provenance, detail: String) -> ApprovalDecision {
-        ApprovalDecision(
+        let opening: String
+        switch provenance {
+        case .brokerUnreachable, .brokerTimeout, .helperTimeout, .internalError, .malformedPayload:
+            opening = "AgentHarness could not get an answer and denied by default"
+        default:
+            opening = "AgentHarness blocked this command"
+        }
+        return ApprovalDecision(
             verdict: .deny,
-            reason: "AgentHarness blocked this command: \(detail). No approval was recorded.",
+            reason: "\(opening): \(detail). No approval was recorded.",
             provenance: provenance)
     }
 }

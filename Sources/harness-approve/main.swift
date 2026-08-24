@@ -113,7 +113,8 @@ do {
     emitter.emit(try ApprovalDecision.decode(from: reply))
 } catch UnixSocket.Error.connectFailed {
     emitter.emit(.failClosed(
-        .brokerUnreachable, detail: "the AgentHarness approval service is not running"))
+        .brokerUnreachable,
+        detail: "Machline is not running, so nothing could approve this. Start it and try again"))
 } catch UnixSocket.Error.timedOut {
     emitter.emit(.failClosed(
         .helperTimeout, detail: "the approval service did not respond in time"))
