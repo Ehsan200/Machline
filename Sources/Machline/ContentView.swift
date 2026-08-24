@@ -84,12 +84,6 @@ struct ContentView: View {
             FileDiffModal(model: model, path: target.path)
         }
         .sheet(item: Binding(
-            get: { model.viewerPath },
-            set: { model.viewerPath = $0 })
-        ) { target in
-            FileViewer(model: model, path: target.path)
-        }
-        .sheet(item: Binding(
             get: { model.reportCommand },
             set: { model.reportCommand = $0 })
         ) { command in

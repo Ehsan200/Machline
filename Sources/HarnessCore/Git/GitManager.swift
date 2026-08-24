@@ -79,13 +79,13 @@ public struct GitManager: Sendable {
             return try unstagedDiffIncludingUntracked(status: known)
         }
         var diffs = GitDiffParser.parse(output.text)
-        let tracked = Set(diffs.map(\.newPath))
+        let tracked = Set(diffs.map(\.displayPath))
         let wanted = Set(paths)
 
         // `status` is only here to find untracked files, which cost a subprocess of their own. A
         // named file that already appeared in the diff is tracked, so there is nothing to look for.
         if !wanted.isEmpty, wanted.isSubset(of: tracked) {
-            return diffs.sorted { $0.newPath < $1.newPath }
+            return diffs.sorted { $0.displayPath < $1.displayPath }
         }
         let status = try known ?? self.status()
         for file in status.files
@@ -93,7 +93,7 @@ public struct GitManager: Sendable {
             && (wanted.isEmpty || wanted.contains(file.path)) {
             if let diff = try untrackedDiff(path: file.path) { diffs.append(diff) }
         }
-        return diffs.sorted { $0.newPath < $1.newPath }
+        return diffs.sorted { $0.displayPath < $1.displayPath }
     }
 
     /// A diff for a file git is not yet tracking.
@@ -123,11 +123,11 @@ public struct GitManager: Sendable {
         -> [GitFileDiff] {
         let status = try known ?? self.status()
         var diffs = try unstagedDiff()
-        let tracked = Set(diffs.map(\.newPath))
+        let tracked = Set(diffs.map(\.displayPath))
         for file in status.files where file.isUntracked && !tracked.contains(file.path) {
             if let diff = try untrackedDiff(path: file.path) { diffs.append(diff) }
         }
-        return diffs.sorted { $0.newPath < $1.newPath }
+        return diffs.sorted { $0.displayPath < $1.displayPath }
     }
 
     // MARK: - Whole-file operations

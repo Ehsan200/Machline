@@ -284,15 +284,15 @@ struct GitWorkbenchView: View {
             ForEach(visibleDiffs) { diff in
                 HStack(spacing: Theme.Space.sm) {
                     CheckBox(isOn: Binding(
-                        get: { git.checkedPaths.contains(diff.newPath) },
-                        set: { _ in git.toggleChecked(diff.newPath) }))
+                        get: { git.checkedPaths.contains(diff.displayPath) },
+                        set: { _ in git.toggleChecked(diff.displayPath) }))
 
-                    Button { git.selectedPath = diff.newPath } label: {
+                    Button { git.selectedPath = diff.displayPath } label: {
                         HStack(spacing: Theme.Space.sm) {
-                            FileIconView(path: diff.newPath)
-                            Text(diff.newPath)
+                            FileIconView(path: diff.displayPath)
+                            Text(diff.displayPath)
                                 .font(Theme.Typography.monoMeta)
-                                .foregroundStyle(git.selectedDiff?.newPath == diff.newPath
+                                .foregroundStyle(git.selectedDiff?.displayPath == diff.displayPath
                                     ? Theme.Colors.textStrong
                                     : Theme.Colors.muted)
                                 .lineLimit(1)
@@ -302,7 +302,7 @@ struct GitWorkbenchView: View {
                         }
                         .padding(.horizontal, Theme.Space.sm)
                         .padding(.vertical, 3)
-                        .background(git.selectedDiff?.newPath == diff.newPath
+                        .background(git.selectedDiff?.displayPath == diff.displayPath
                             ? Theme.Colors.selection
                             : .clear)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -331,11 +331,11 @@ struct GitWorkbenchView: View {
                 moveSelection(by: 1)
                 return .handled
             case .space:
-                guard let path = git.selectedDiff?.newPath else { return .ignored }
+                guard let path = git.selectedDiff?.displayPath else { return .ignored }
                 git.toggleChecked(path)
                 return .handled
             case .return:
-                guard let path = git.selectedDiff?.newPath else { return .ignored }
+                guard let path = git.selectedDiff?.displayPath else { return .ignored }
                 model.openDiffModal(path: path)
                 return .handled
             default:
@@ -347,17 +347,17 @@ struct GitWorkbenchView: View {
     /// Moves through whichever side is showing, stopping at the ends rather than wrapping — a file
     /// list is a list, not a carousel, and wrapping loses the operator's place.
     private func moveSelection(by offset: Int) {
-        let paths = visibleDiffs.map(\.newPath)
+        let paths = visibleDiffs.map(\.displayPath)
         guard !paths.isEmpty else { return }
         // `String.flatMap` iterates characters, so the index lookup is done explicitly.
-        let selected = git.selectedDiff?.newPath
+        let selected = git.selectedDiff?.displayPath
         let current = selected.flatMap { paths.firstIndex(of: $0) } ?? 0
         git.selectedPath = paths[min(max(current + offset, 0), paths.count - 1)]
     }
 
     /// Select-all and the bulk action for whichever side is showing.
     private var bulkBar: some View {
-        let paths = visibleDiffs.map(\.newPath)
+        let paths = visibleDiffs.map(\.displayPath)
         let checked = git.checkedPathsOnCurrentSide()
         return HStack(spacing: Theme.Space.sm) {
             CheckBox(

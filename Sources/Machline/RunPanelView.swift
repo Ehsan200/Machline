@@ -394,10 +394,10 @@ struct ChangesSection: View {
                     ForEach(changedFiles) { diff in
                         ChangedFileRow(
                             diff: diff,
-                            status: model.changeStatus(for: diff.newPath),
-                            onOpen: { model.openDiffModal(path: diff.newPath) },
-                            onView: { model.openViewer(path: diff.newPath) },
-                            onReveal: { model.revealInFinder(path: diff.newPath) })
+                            status: model.changeStatus(for: diff.displayPath),
+                            onOpen: { model.openDiffModal(path: diff.displayPath) },
+                            onView: { model.openViewer(path: diff.displayPath) },
+                            onReveal: { model.revealInFinder(path: diff.displayPath) })
                     }
                 }
             }
@@ -428,11 +428,11 @@ struct ChangedFileRow: View {
                     .foregroundStyle(statusTint)
                     .frame(width: 12, alignment: .leading)
 
-                FileIconView(path: diff.newPath, size: 10)
+                FileIconView(path: diff.displayPath, size: 10)
 
                 // Truncating from the middle keeps the filename readable, which is the part the
                 // operator is looking for.
-                Text(diff.newPath)
+                Text(diff.displayPath)
                     .font(Theme.Typography.monoMeta)
                     .foregroundStyle(Theme.Colors.text)
                     .lineLimit(1)

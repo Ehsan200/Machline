@@ -112,6 +112,9 @@ public struct ApprovalDecision: Sendable, Hashable, Codable {
         /// Answered by `AutoApproval` without the operator seeing it. Distinct from
         /// `allowlistRule` so the audit trail shows which calls were never read by a human.
         case autoApproved
+        /// Covered by `permissions.allow` in the machine's own settings — the CLI would not have
+        /// prompted for it either. Distinct from `allowlistRule`, which is a rule set in this app.
+        case machineAllowlist
         case brokerTimeout
         case helperTimeout
         case brokerUnreachable

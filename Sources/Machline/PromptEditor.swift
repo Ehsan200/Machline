@@ -271,6 +271,24 @@ final class PromptTextView: NSTextView {
         guard window?.firstResponder === self else {
             return super.performKeyEquivalent(with: event)
         }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        // ⌘Z and ⇧⌘Z, claimed explicitly.
+        //
+        // SwiftUI's Edit menu binds Undo to the `UndoManager` in its own environment, which for a
+        // window whose text is an `NSViewRepresentable` is nobody — so the menu item is disabled and
+        // the chord never reaches this view's own undo stack. Routing it here is the difference
+        // between a composer that can take back a keystroke and one that cannot.
+        if modifiers == .command || modifiers == [.command, .shift],
+           event.charactersIgnoringModifiers?.lowercased() == "z" {
+            if modifiers.contains(.shift) {
+                undoManager?.redo()
+            } else {
+                undoManager?.undo()
+            }
+            return true
+        }
+
         guard event.modifierFlags.contains(.control),
               let characters = event.charactersIgnoringModifiers?.lowercased()
         else {

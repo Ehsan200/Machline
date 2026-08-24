@@ -50,6 +50,8 @@ final class AppModel: Identifiable {
 
     private(set) var session: AgentSession?
     private(set) var graph = AgentGraph()
+    /// What this tab last told `LiveSessions` it was running.
+    private var registeredSessionID: String?
     private(set) var selectedAgentID: String?
     private(set) var sessionState: SessionState = .idle
     private(set) var transcriptRevision = 0
@@ -140,6 +142,7 @@ final class AppModel: Identifiable {
     /// Re-reads the machine's rules, for after they have been edited by hand.
     func reloadMachineConfiguration() {
         machineConfiguration = MachineConfiguration.read()
+        if let session { Task { await session.setMachineConfiguration(enforcedMachineConfiguration) } }
     }
 
     struct AuditEntry: Identifiable {
@@ -589,7 +592,11 @@ final class AppModel: Identifiable {
 
     func toggleTerminal() {
         isTerminalVisible.toggle()
-        if isTerminalVisible { hasOpenedTerminal = true }
+        if isTerminalVisible {
+            hasOpenedTerminal = true
+            // One occupant of the band at a time; the timeline is not squeezed twice.
+            activeEditorPath = nil
+        }
     }
 
     /// Ends the shell and unmounts the pane.
@@ -602,8 +609,57 @@ final class AppModel: Identifiable {
         terminalGeneration &+= 1
     }
 
-    /// The file open in the viewer, if any.
-    var viewerPath: DiffTarget?
+    // MARK: Editor pane
+
+    /// Files open for editing, in the order they were opened. Held here rather than in the view so
+    /// a tab that is not showing keeps its buffer, its unsaved edits and its undo stack.
+    private(set) var editorTabs: [EditorTab] = []
+    /// The file showing in the lower pane, or `nil` when the shell is — or nothing.
+    private(set) var activeEditorPath: String?
+
+    var activeEditorTab: EditorTab? {
+        editorTabs.first { $0.path == activeEditorPath }
+    }
+
+    /// True when the band below the timeline has something in it.
+    var isLowerPaneVisible: Bool { isTerminalVisible || activeEditorPath != nil }
+
+    /// Opens a file for editing, or brings it forward if it is already open.
+    func openEditor(path: String) {
+        if !editorTabs.contains(where: { $0.path == path }) {
+            editorTabs.append(EditorTab(path: path))
+        }
+        activeEditorPath = path
+        isTerminalVisible = false
+    }
+
+    func showEditor(path: String) {
+        guard editorTabs.contains(where: { $0.path == path }) else { return }
+        activeEditorPath = path
+        isTerminalVisible = false
+    }
+
+    /// Closes a file, writing anything outstanding first — closing a tab must not be how an edit is
+    /// lost.
+    func closeEditor(path: String) {
+        editorTabs.first { $0.path == path }?.editor.flush()
+        editorTabs.removeAll { $0.path == path }
+        guard activeEditorPath == path else { return }
+        activeEditorPath = editorTabs.last?.path
+        if activeEditorPath == nil, hasOpenedTerminal { isTerminalVisible = true }
+    }
+
+    /// Puts the pane away without closing anything in it.
+    func hideEditorPane() {
+        activeEditorPath = nil
+    }
+
+    func showShell() {
+        hasOpenedTerminal = true
+        isTerminalVisible = true
+        activeEditorPath = nil
+    }
+
     /// The command whose report is on screen, if any.
     var reportCommand: LocalCommand?
     /// A run-panel section a command asked to open.
@@ -1035,13 +1091,17 @@ final class AppModel: Identifiable {
         // A session being edited out from under a running child would leave the transcript and the
         // live process disagreeing about what happened.
         guard !isLive(session) else {
-            archiveError = "Stop this session before archiving or deleting it."
+            archiveError = isLiveHere(session)
+                ? "Stop this session before archiving or deleting it."
+                : "That conversation is running in another tab. Stop it there first."
             return
         }
         do {
             try operation()
             archiveError = nil
             refreshHistory()
+            // Every other tab is holding its own copy of this list.
+            LiveSessions.shared.noteHistoryChanged()
         } catch {
             archiveError = String(describing: error)
         }
@@ -1195,6 +1255,7 @@ final class AppModel: Identifiable {
             self.session = session
             self.sessionID = id
             self.activeModel = .some(model)
+            syncLiveRegistration()
             pump = Task { [weak self] in
                 await self?.consume(session: session)
             }
@@ -1249,7 +1310,11 @@ final class AppModel: Identifiable {
             helperPath: BundledHelpers.approvalHelperPath,
             socketPath: try ApprovalBroker.socketPath(forSession: sessionID, in: runDirectory),
             settingsPath: settingsURL,
-            autoApproval: autoApproval)
+            autoApproval: autoApproval,
+            // Only when the session inherits the machine's rules; a sealed one has none to honour.
+            // Read here rather than passed in: this runs once per session start, and the file is
+            // the operator's to edit between one session and the next.
+            machineConfiguration: isolation == .inherited ? MachineConfiguration.read() : .none)
         return (session, sessionID)
     }
 
@@ -1265,6 +1330,7 @@ final class AppModel: Identifiable {
             sessionState = .failed(String(describing: error))
         }
         self.session = nil
+        syncLiveRegistration()
         if case .running = sessionState { sessionState = .exited(status: 0) }
     }
 
@@ -1378,6 +1444,9 @@ final class AppModel: Identifiable {
         transcriptRevision &+= 1
         recordActivity(in: snapshot)
         recordBusyState(in: snapshot)
+        // The CLI's real id only arrives with the handshake, and a forked resume mints one we did
+        // not choose — so what this tab is running is not known until the graph says so.
+        syncLiveRegistration()
         if selectedAgentID == nil { selectedAgentID = snapshot.root?.id }
         if let capabilities = snapshot.root?.capabilities {
             mcp.update(capabilities: capabilities)
@@ -1539,19 +1608,16 @@ final class AppModel: Identifiable {
     }
 
     func openViewer(path: String) {
-        viewerPath = DiffTarget(path: path)
+        openEditor(path: path)
     }
 
-    /// Closes the diff and opens the viewer on the same file.
+    /// Closes the diff and opens the file in the editor pane.
     ///
-    /// Sequenced rather than simultaneous: SwiftUI drops a presentation requested while another
-    /// sheet is still dismissing, which is why doing both in one action did nothing.
+    /// No longer a sheet swap, so no longer sequenced: the pane is not a presentation and does not
+    /// wait for the modal to finish dismissing.
     func replaceDiffModalWithViewer(path: String) {
         diffModalPath = nil
-        Task {
-            try? await Task.sleep(for: .milliseconds(220))
-            self.viewerPath = DiffTarget(path: path)
-        }
+        openEditor(path: path)
     }
 
     /// Opens the file in whatever the operator uses for it.
@@ -1704,7 +1770,24 @@ extension AppModel {
         return sessionID?.uuidString.lowercased()
     }
 
+    /// Keeps the process-wide registry level with what this tab is actually running.
+    private func syncLiveRegistration() {
+        let current = session != nil ? liveSessionID : nil
+        guard current != registeredSessionID else { return }
+        LiveSessions.shared.ended(registeredSessionID)
+        LiveSessions.shared.began(current)
+        registeredSessionID = current
+    }
+
+    /// Live *anywhere*, not just in this tab.
+    ///
+    /// Asking only about `self` is what let one tab delete a conversation another tab was running.
     func isLive(_ recorded: HistoricalSession) -> Bool {
+        LiveSessions.shared.isRunning(recorded.id)
+    }
+
+    /// True when this tab in particular is the one running it.
+    func isLiveHere(_ recorded: HistoricalSession) -> Bool {
         session != nil && recorded.id.lowercased() == liveSessionID
     }
 
@@ -1799,13 +1882,13 @@ extension AppModel {
         if let cached = changesCache, cached.revision == git.revision { return cached.diffs }
         var byPath: [String: GitFileDiff] = [:]
         for diff in git.unstaged + git.staged {
-            if let existing = byPath[diff.newPath] {
+            if let existing = byPath[diff.displayPath] {
                 // The larger of the two sides is the better single summary; they are not additive.
                 if diff.additions + diff.deletions > existing.additions + existing.deletions {
-                    byPath[diff.newPath] = diff
+                    byPath[diff.displayPath] = diff
                 }
             } else {
-                byPath[diff.newPath] = diff
+                byPath[diff.displayPath] = diff
             }
         }
         let sorted = byPath.values
@@ -1822,12 +1905,12 @@ extension AppModel {
     /// staged diff numbers its lines against the index rather than against the file on screen.
     func workingTreeDiff(for path: String) -> GitFileDiff? {
         let wanted = repositoryRelativePath(path)
-        return git?.workingTree.first { $0.newPath == wanted }
+        return git?.workingTree.first { $0.displayPath == wanted }
     }
 
     func diff(for path: String) -> GitFileDiff? {
         let wanted = repositoryRelativePath(path)
-        return sessionChanges.first { $0.newPath == wanted }
+        return sessionChanges.first { $0.displayPath == wanted }
     }
 
     /// A path as Git reports it: relative to the repository root.

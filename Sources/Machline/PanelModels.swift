@@ -463,7 +463,7 @@ final class GitPanelModel {
     var selectedDiff: GitFileDiff? {
         let source = showStagedSide ? staged : unstaged
         guard let selectedPath else { return source.first }
-        return source.first { $0.newPath == selectedPath } ?? source.first
+        return source.first { $0.displayPath == selectedPath } ?? source.first
     }
 
     var advisories: [ConventionalCommit.Advisory] { commitDraft.advisories() }
@@ -505,7 +505,7 @@ final class GitPanelModel {
     func fileDiff(_ path: String) async -> GitFileDiff? {
         let manager = self.manager
         return await Task.detached(priority: .userInitiated) { () -> GitFileDiff? in
-            try? manager.workingTreeDiff(paths: [path]).first { $0.newPath == path }
+            try? manager.workingTreeDiff(paths: [path]).first { $0.displayPath == path }
         }.value
     }
 
@@ -627,7 +627,7 @@ final class GitPanelModel {
     /// Staging a path that is no longer unstaged is a no-op that reads as a bug, so the set is
     /// intersected with the visible list rather than sent whole.
     func checkedPathsOnCurrentSide() -> [String] {
-        let visible = Set((showStagedSide ? staged : unstaged).map(\.newPath))
+        let visible = Set((showStagedSide ? staged : unstaged).map(\.displayPath))
         return checkedPaths.intersection(visible).sorted()
     }
 

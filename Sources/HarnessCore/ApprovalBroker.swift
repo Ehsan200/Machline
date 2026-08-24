@@ -93,6 +93,8 @@ public actor ApprovalBroker {
     public private(set) var policy: PolicyStore
     /// Which calls are answered without the operator. Convenience only — see `AutoApproval`.
     public private(set) var autoApproval: AutoApproval
+    /// The machine's own permission rules, when the session inherits them.
+    public private(set) var machineConfiguration: MachineConfiguration
     public let socketPath: String
 
     private let classifier: RiskClassifier
@@ -105,12 +107,14 @@ public actor ApprovalBroker {
         socketPath: String,
         policy: PolicyStore = PolicyStore(),
         autoApproval: AutoApproval = .manual,
+        machineConfiguration: MachineConfiguration = .none,
         classifier: RiskClassifier = RiskClassifier(),
         operatorWait: TimeInterval = ApprovalBroker.defaultOperatorWait
     ) {
         self.socketPath = socketPath
         self.policy = policy
         self.autoApproval = autoApproval
+        self.machineConfiguration = machineConfiguration
         self.classifier = classifier
         self.operatorWait = operatorWait
     }
@@ -124,6 +128,10 @@ public actor ApprovalBroker {
     /// Changes what is answered automatically. Takes effect on the next request; requests already
     /// waiting on an operator keep waiting.
     public func setAutoApproval(_ autoApproval: AutoApproval) { self.autoApproval = autoApproval }
+
+    public func setMachineConfiguration(_ configuration: MachineConfiguration) {
+        machineConfiguration = configuration
+    }
 
     // MARK: - Lifecycle
 
@@ -193,6 +201,20 @@ public actor ApprovalBroker {
         // Explicit rules are evaluated first, so a deny rule still beats auto-approval.
         if let match = policy.evaluate(payload: request.payload) {
             return match.decision
+        }
+
+        // What the CLI would have let through on its own. Asking here as well made this gate
+        // stricter than the thing it wraps: an operator who has already allowed `git status` on this
+        // machine was still prompted for it in this window.
+        //
+        // A machine `deny` still wins, exactly as it does at runtime.
+        if let command = request.payload.bashCommand,
+           machineConfiguration.deniesBashCommand(command) == nil,
+           let rule = machineConfiguration.allowsBashCommand(command) {
+            return ApprovalDecision(
+                verdict: .allow,
+                reason: "Allowed by \(rule) in this machine's settings.",
+                provenance: .machineAllowlist)
         }
 
         let assessment = classifier.assess(payload: request.payload)

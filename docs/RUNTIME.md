@@ -16,7 +16,9 @@ canary for frame-schema drift.
 
 - A `result` frame is a **turn boundary, not EOF** — one run can emit several, and the process stays
   alive awaiting input.
-- Steering is **queued to the next turn boundary**, not a mid-turn interrupt.
+- Steering is **queued to the next turn boundary**, not a mid-turn interrupt. A mid-turn abort is a
+  `control_request` with subtype `interrupt` written to stdin — `SIGINT` also stops the work, but it
+  stops the *process*, which ends the conversation rather than the turn.
 - `PreToolUse` hooks **fail open on timeout** — the runtime cancels the hook and runs the command.
   The gate is therefore built on three nested deadlines (runtime > helper > broker), so the helper
   always ends the wait with an explicit denial before the runtime can cancel it. Every failure path

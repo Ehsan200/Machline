@@ -48,6 +48,7 @@ public actor AgentSession {
         settingsPath: URL,
         policy: PolicyStore = PolicyStore(),
         autoApproval: AutoApproval = .manual,
+        machineConfiguration: MachineConfiguration = .none,
         runtimeHookTimeout: Int = 600,
         helperDeadline: Int = 540,
         operatorWait: TimeInterval = ApprovalBroker.defaultOperatorWait
@@ -66,7 +67,7 @@ public actor AgentSession {
 
         broker = ApprovalBroker(
             socketPath: socketPath, policy: policy, autoApproval: autoApproval,
-            operatorWait: operatorWait)
+            machineConfiguration: machineConfiguration, operatorWait: operatorWait)
         supervisor = SessionSupervisor(configuration: configuration)
     }
 
@@ -114,9 +115,17 @@ public actor AgentSession {
     ///
     /// Whatever was queued behind the running turn dies with it — the CLI discards stdin it has not
     /// consumed and never echoes it — so the tree is told before the process is.
+    /// Abandons the current turn and leaves the session standing.
+    ///
+    /// Previously this sent `SIGINT`, which ends the child — so stopping one tool call took the
+    /// whole conversation with it.
     public func interrupt() async {
         emit(.graphChanged(graph.noteInterrupted()))
-        await supervisor.interrupt()
+        do {
+            try await supervisor.requestInterrupt()
+        } catch {
+            emit(.standardError("Could not interrupt: \(error)"))
+        }
     }
 
     public func endInput() async {
@@ -145,6 +154,10 @@ public actor AgentSession {
 
     /// Changes what the broker answers without asking. Applies to the next request; anything
     /// already waiting on the operator keeps waiting.
+    public func setMachineConfiguration(_ configuration: MachineConfiguration) async {
+        await broker.setMachineConfiguration(configuration)
+    }
+
     public func setAutoApproval(_ autoApproval: AutoApproval) async {
         await broker.setAutoApproval(autoApproval)
     }

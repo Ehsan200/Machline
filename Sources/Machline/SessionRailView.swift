@@ -51,6 +51,9 @@ struct SessionRailView: View {
             auditFooter
         }
         .background(Theme.Colors.panel)
+        // Another tab archiving or deleting a conversation leaves this list offering one that is
+        // no longer there. Each tab holds its own copy, so each has to be told.
+        .onChange(of: LiveSessions.shared.historyRevision) { model.refreshHistory() }
         .alert(
             "Delete this conversation?",
             isPresented: Binding(
@@ -742,6 +745,7 @@ struct AuditRow: View {
         switch entry.provenance {
         case .operatorDecision: return "You decided"
         case .autoApproved: return "Auto-approved — not reviewed"
+        case .machineAllowlist: return "Allowed by this machine's settings"
         case .allowlistRule: return "Allowlist rule"
         case .denylistRule: return "Denylist rule"
         case .brokerTimeout, .helperTimeout: return "Denied — no response in time"

@@ -128,7 +128,7 @@ public actor SessionSupervisor {
     /// tool call is in flight is consumed only once that call returns (docs/RUNTIME.md, verified at
     /// 4.0 s sent / 17.7 s consumed across a 12-second tool call). Callers should treat the message
     /// as pending until the `--replay-user-messages` echo arrives on the frame stream, and must not
-    /// use this as a way to stop a running tool — that is `interrupt()`.
+    /// use this as a way to stop a running tool — that is `requestInterrupt()`.
     public func send(userMessage text: String) throws {
         guard case .running = state else { throw SupervisorError.notRunning }
         let frame: JSONValue = .object([
@@ -157,10 +157,31 @@ public actor SessionSupervisor {
         try? stdinPipe.fileHandleForWriting.close()
     }
 
-    /// Stops the child. Unlike a steer, this takes effect immediately.
-    public func interrupt() {
-        guard process.isRunning else { return }
-        process.interrupt()
+    /// Asks the CLI to abandon the turn it is in the middle of.
+    ///
+    /// A control request on stdin, not a signal. `SIGINT` does stop the work, but it stops the
+    /// *process* — the frame stream ends, the transcript closes, and the conversation is over
+    /// because the operator wanted one tool call to stop. The control channel aborts the turn and
+    /// leaves the child alive and waiting for the next message, which is what "stop" has to mean
+    /// when the alternative is losing the session.
+    ///
+    /// Unlike a steer, this is not queued behind the running tool call (docs/RUNTIME.md).
+    public func requestInterrupt() throws {
+        guard case .running = state else { throw SupervisorError.notRunning }
+        let frame: JSONValue = .object([
+            "type": .string("control_request"),
+            "request_id": .string(UUID().uuidString),
+            "request": .object(["subtype": .string("interrupt")])
+        ])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        var data = try encoder.encode(frame)
+        data.append(UInt8(ascii: "\n"))
+        do {
+            try stdinPipe.fileHandleForWriting.write(contentsOf: data)
+        } catch {
+            throw SupervisorError.writeFailed(String(describing: error))
+        }
     }
 
     /// Hard kill, including any process group the child spawned.

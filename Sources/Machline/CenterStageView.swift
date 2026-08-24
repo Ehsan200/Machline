@@ -63,14 +63,8 @@ struct CenterStageView: View {
                 }
             }
 
-            // Mounted once opened and collapsed rather than removed when hidden: tearing the view
-            // down ends the shell, so a running build would die every time the pane was toggled.
-            if model.hasOpenedTerminal, let workspace = model.workspace?.url {
-                terminalSection(workspace: workspace, availableHeight: availableHeight)
-                    .frame(height: model.isTerminalVisible ? nil : 0)
-                    .opacity(model.isTerminalVisible ? 1 : 0)
-                    .allowsHitTesting(model.isTerminalVisible)
-                    .clipped()
+            if model.isLowerPaneVisible {
+                lowerPane(availableHeight: availableHeight)
             }
 
             ResizeHandle(
@@ -116,7 +110,7 @@ struct CenterStageView: View {
 
     private var terminalHeight: CGFloat { draggedTerminalHeight ?? storedTerminalHeight }
 
-    /// The pane's handle and header, which take height before the emulator gets any.
+    /// The pane's handle and header, which take height before its contents get any.
     private static let terminalChrome: CGFloat = 9 + 34
     private static let terminalMinHeight: CGFloat = 120
     private static let terminalMaxFraction: CGFloat = 0.75
@@ -150,12 +144,17 @@ struct CenterStageView: View {
                 .map { .init($0, label: ($0 as NSString).lastPathComponent, detail: $0) }
     }
 
-    /// The shell, between the transcript and the composer.
+    /// The band between the transcript and the composer: the shell and any open files, as tabs.
+    ///
+    /// One occupant at a time, so the timeline is only ever squeezed once. Everything opened stays
+    /// mounted and is collapsed rather than removed — tearing the shell down ends it, and tearing an
+    /// editor down would take its unsaved edits and its undo stack with it.
     ///
     /// Its own drag handle and its own remembered height: an operator watching a build wants it
     /// large, and one glancing at `git status` wants it small.
-    private func terminalSection(workspace: URL, availableHeight: CGFloat) -> some View {
-        VStack(spacing: 0) {
+    private func lowerPane(availableHeight: CGFloat) -> some View {
+        let contentHeight = min(terminalHeight, terminalCeiling(availableHeight: availableHeight))
+        return VStack(spacing: 0) {
             ResizeHandle(
                 onDrag: { translation in
                     let next = min(
@@ -169,47 +168,74 @@ struct CenterStageView: View {
                     draggedTerminalHeight = nil
                 })
 
-            HStack(spacing: Theme.Space.md) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.Colors.subtle)
-                Text("SHELL")
-                    .font(Theme.Typography.sectionLabel)
-                    .tracking(0.6)
-                    .foregroundStyle(Theme.Colors.subtle)
-                Text(workspace.lastPathComponent)
-                    .font(Theme.Typography.monoMeta)
-                    .foregroundStyle(Theme.Colors.subtle)
+            paneTabs
 
-                Spacer(minLength: 0)
+            ZStack(alignment: .topLeading) {
+                if model.hasOpenedTerminal, let workspace = model.workspace?.url {
+                    TerminalPane(
+                        workingDirectory: workspace,
+                        shell: model.terminalShell,
+                        generation: Binding(
+                            get: { model.terminalGeneration },
+                            set: { _ in }))
+                        .opacity(model.isTerminalVisible ? 1 : 0)
+                        .allowsHitTesting(model.isTerminalVisible)
+                }
 
+                ForEach(model.editorTabs) { tab in
+                    EditorTabView(model: model, tab: tab)
+                        .opacity(model.activeEditorPath == tab.path ? 1 : 0)
+                        .allowsHitTesting(model.activeEditorPath == tab.path)
+                }
+            }
+            .frame(height: contentHeight)
+            .clipped()
+        }
+    }
+
+    /// The tab strip, plus whatever controls belong to whichever tab is showing.
+    private var paneTabs: some View {
+        HStack(spacing: Theme.Space.xs) {
+            if model.hasOpenedTerminal {
+                PaneTab(
+                    title: "Shell",
+                    systemImage: "terminal",
+                    isSelected: model.isTerminalVisible,
+                    isDirty: false,
+                    onSelect: { model.showShell() },
+                    onClose: { model.closeTerminal() })
+            }
+
+            ForEach(model.editorTabs) { tab in
+                PaneTab(
+                    title: tab.name,
+                    systemImage: nil,
+                    isSelected: model.activeEditorPath == tab.path,
+                    isDirty: tab.editor.isDirty,
+                    onSelect: { model.showEditor(path: tab.path) },
+                    onClose: { model.closeEditor(path: tab.path) })
+            }
+
+            Spacer(minLength: Theme.Space.md)
+
+            if model.isTerminalVisible {
                 Select(
                     selection: Binding(
                         get: { model.terminalShell ?? "" },
                         set: { model.terminalShell = $0.isEmpty ? nil : $0 }),
                     options: shellOptions)
-
                 QuietButton(title: "Restart") { model.restartTerminal() }
-                IconButton(systemName: "chevron.down", help: "Hide the shell (⌃`)") {
-                    model.isTerminalVisible = false
-                }
-                IconButton(systemName: "xmark", help: "Close the shell and end it") {
-                    model.closeTerminal()
-                }
             }
-            .padding(.horizontal, Theme.Space.md)
-            // 28pt is exactly the icon button's own height, which left it touching the edges.
-            .frame(height: 34)
-            .background(Theme.Colors.panel)
 
-            TerminalPane(
-                workingDirectory: workspace,
-                shell: model.terminalShell,
-                generation: Binding(
-                    get: { model.terminalGeneration },
-                    set: { _ in }))
-                .frame(height: min(terminalHeight, terminalCeiling(availableHeight: availableHeight)))
+            IconButton(systemName: "chevron.down", help: "Hide this pane (⌃`)") {
+                model.isTerminalVisible = false
+                model.hideEditorPane()
+            }
         }
+        .padding(.horizontal, Theme.Space.md)
+        // 28pt is exactly the icon button's own height, which left it touching the edges.
+        .frame(height: 34)
+        .background(Theme.Colors.panel)
     }
 
     /// Shown when the centre has nothing to draw: no live agent and no replayed history.

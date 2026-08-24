@@ -306,7 +306,7 @@ struct ComposerView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Abort the current tool call. Steering only lands at the next turn boundary.")
+                .help("Abort this turn. The session stays open — steering lands at the next turn boundary.")
             }
 
             QuietButton(

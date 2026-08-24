@@ -57,7 +57,13 @@ public struct GitHunk: Sendable, Hashable, Identifiable {
 
 /// A single file's diff.
 public struct GitFileDiff: Sendable, Hashable, Identifiable {
-    public var id: String { newPath }
+    /// The file's name, for showing and for identifying it.
+    ///
+    /// A deletion's post-image is `/dev/null` — not a name, and the *same* non-name for every
+    /// deleted file, so keying on `newPath` also collapses two deletions into one.
+    public var displayPath: String { newPath == "/dev/null" ? oldPath : newPath }
+
+    public var id: String { displayPath }
     public let oldPath: String
     public let newPath: String
     /// The `diff --git` / `index` / `---` / `+++` preamble, reproduced verbatim when building a

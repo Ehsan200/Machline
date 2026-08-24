@@ -76,10 +76,23 @@ public struct MachineConfiguration: Sendable, Hashable {
     /// `Bash(exact command)`. It exists so the approval sheet can warn before a click that will not
     /// take, never to decide anything.
     public func deniesBashCommand(_ command: String) -> String? {
+        Self.match(command, against: denyRules)
+    }
+
+    /// The machine allowlist entry covering this command, if any.
+    ///
+    /// The CLI would not have prompted for these. Honouring them is what keeps the gate from being
+    /// stricter than the thing it is wrapping — an operator who has already said `ls` is fine should
+    /// not be asked again because they ran it in this window.
+    public func allowsBashCommand(_ command: String) -> String? {
+        Self.match(command, against: allowRules)
+    }
+
+    private static func match(_ command: String, against rules: [String]) -> String? {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        for rule in denyRules {
+        for rule in rules {
             guard rule.hasPrefix("Bash("), rule.hasSuffix(")") else { continue }
             let pattern = String(rule.dropFirst("Bash(".count).dropLast())
             if pattern.hasSuffix(":*") {
