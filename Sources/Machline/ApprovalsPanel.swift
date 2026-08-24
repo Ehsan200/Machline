@@ -420,9 +420,9 @@ struct ApprovalsPanel: View {
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.Colors.subtle)
             Text("Risk levels are pattern matching, not analysis — an unrecognised command reads "
-                + "as benign. The `--disallowedTools` denylist still blocks rm, sudo, and dd "
-                + "regardless of this setting, and every auto-approval is recorded in Recent "
-                + "approvals.")
+                + "as benign. Nothing is blocked outright: this gate is the only thing standing "
+                + "between the agent and a destructive command, so auto mode hands it the ones it "
+                + "reads as safe. Every auto-approval is recorded in Recent approvals.")
                 .font(Theme.Typography.meta)
                 .foregroundStyle(Theme.Colors.subtle)
                 .fixedSize(horizontal: false, vertical: true)

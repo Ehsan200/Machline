@@ -52,14 +52,12 @@ struct SessionConfigurationTests {
 
     /// Everything the gate depends on is independent of setting sources, so widening isolation
     /// must not quietly widen execution.
-    @Test("Inherited mode keeps the gate and the static denylist")
+    @Test("Inherited mode keeps the gate")
     func inheritedModeKeepsEnforcement() {
         let args = arguments(isolation: .inherited) {
             $0.settingsPath = URL(fileURLWithPath: "/tmp/settings.json")
         }
         #expect(args.contains("--settings"))
-        #expect(args.contains("--disallowedTools"))
-        #expect(args.contains { $0.hasPrefix("Bash(rm ") })
         #expect(args.contains("--verbose"))
     }
 
@@ -69,13 +67,13 @@ struct SessionConfigurationTests {
         #expect(configuration.isolation == .sealed)
     }
 
-    /// The crash-proof backstop from docs/RUNTIME.md Finding 3 — the only enforcement that survives the
-    /// app dying, so it must never default to empty.
-    @Test("A static denylist is passed by default")
-    func denylistByDefault() {
-        let args = arguments()
-        #expect(args.contains("--disallowedTools"))
-        #expect(args.contains { $0.hasPrefix("Bash(rm ") })
+    /// `--disallowedTools` refuses with no prompt and no way for the operator to say yes, so the
+    /// default list is empty and the flag is omitted entirely. A pattern added back here is a wall,
+    /// not a speed bump.
+    @Test("No static denylist is passed by default")
+    func noDenylistByDefault() {
+        #expect(SessionConfiguration.defaultDenylist.isEmpty)
+        #expect(!arguments().contains("--disallowedTools"))
     }
 
     @Test("Duplex stream-json transport is configured")

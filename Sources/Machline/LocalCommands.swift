@@ -144,7 +144,11 @@ extension AppModel {
                     ? Theme.Colors.error
                     : (autoApproval.isEnabled ? Theme.Colors.warning : Theme.Colors.text)),
             .init(label: "Standing rules", value: "\(activeRules.count)"),
-            .init(label: "Static denylist", value: "\(SessionConfiguration.defaultDenylist.count) patterns"),
+            .init(
+                label: "Static denylist",
+                value: SessionConfiguration.defaultDenylist.isEmpty
+                    ? "none"
+                    : "\(SessionConfiguration.defaultDenylist.count) patterns"),
             // Not ours, and it outranks us: a deny here refuses a call this gate has approved.
             .init(
                 label: "Your ~/.claude denies",

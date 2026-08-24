@@ -7,8 +7,8 @@ import Foundation
 /// still holds with auto-approval on:
 ///
 /// - deny rules in `PolicyStore` are evaluated first and win outright;
-/// - the static `--disallowedTools` denylist is enforced by the runtime, not by us, and survives
-///   this process dying;
+/// - deny rules in the operator's own `~/.claude` settings are enforced by the runtime, not by us,
+///   and survive this process dying — `defaultDenylist` no longer adds any of its own;
 /// - every auto-approval is emitted on the audit stream with `.autoApproved` provenance.
 ///
 /// What does not hold: an operator reading each command before it runs. Raising `bashCeiling`

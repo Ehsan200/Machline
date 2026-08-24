@@ -42,8 +42,12 @@ canary for frame-schema drift.
    Hence three nested deadlines, innermost first.
 2. **`result` is a turn boundary, not EOF.** One run emitted two `result` frames when a background
    subagent finished after the parent's turn ended. Session teardown keys off process exit.
-3. **`--disallowedTools` is a hard static gate.** The only enforcement that survives this app
-   dying, which is why it defaults to non-empty.
+3. **`--disallowedTools` is a hard static gate.** It refuses with no prompt and no way for the
+   operator to say yes, which is why it now defaults to **empty**: `Bash(rm *)` walled off ordinary
+   single-file deletes that the operator would have approved on sight, and no amount of
+   `settings.json` allow-listing could reach past it. Risk is carried by the approval gate, which
+   can ask. It remains the only enforcement that survives this app dying — add a pattern back only
+   for calls nobody should ever be asked about.
 4. **`--setting-sources ""` does not isolate MCP servers.** A run with settings isolation and no
    `--strict-mcp-config` connected nine ambient MCP servers and ~250 tools into a session meant to
    be sealed. Both flags are emitted together, and only in sealed mode — sessions default to

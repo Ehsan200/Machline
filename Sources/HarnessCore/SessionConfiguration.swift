@@ -34,8 +34,8 @@ public struct SessionConfiguration: Sendable {
     public var model: String?
     /// Base tool set (`--tools`). `nil` leaves the CLI default in place.
     public var tools: [String]?
-    /// Static denylist (`--disallowedTools`). This is the crash-proof backstop from docs/RUNTIME.md
-    /// Finding 3 — the only enforcement that survives the app dying — so it defaults to non-empty.
+    /// Static denylist (`--disallowedTools`). The one enforcement that survives the app dying, and
+    /// the one the operator cannot override at the prompt. Empty by default — see `defaultDenylist`.
     public var disallowedTools: [String]
     /// Directories the session may read outside its project (`--add-dir`).
     ///
@@ -115,16 +115,15 @@ public struct SessionConfiguration: Sendable {
         ].map { $0.resolvingSymlinksInPath() }
     }
 
-    /// Destructive patterns unreachable regardless of broker state. Deliberately conservative —
-    /// this is a backstop, not the policy engine.
-    public static let defaultDenylist = [
-        "Bash(rm *)",
-        "Bash(sudo *)",
-        "Bash(shutdown *)",
-        "Bash(mkfs*)",
-        "Bash(dd *)",
-        "Bash(:(){*"
-    ]
+    /// Patterns unreachable regardless of broker state.
+    ///
+    /// Empty by choice. `--disallowedTools` refuses outright — no prompt, no broker, no way for the
+    /// operator to say yes — so a pattern here is not a speed bump but a wall, and `Bash(rm *)`
+    /// walled off ordinary single-file deletes the operator would have approved on sight. Risk is
+    /// carried by `RiskClassifier` and the approval gate instead, which can ask.
+    ///
+    /// Re-add patterns here for the ones nobody should ever be asked about.
+    public static let defaultDenylist: [String] = []
 
     public init(
         executable: String = "claude",
