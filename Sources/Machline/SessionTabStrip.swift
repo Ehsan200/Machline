@@ -356,16 +356,8 @@ struct SessionTab: View {
     }
 }
 
-/// Paints the window's own background before SwiftUI draws, so a new window never flashes black.
-struct WindowBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async {
-            view.window?.backgroundColor = NSColor(Theme.Colors.canvas)
-        }
-    }
-}
+// The window's own background is painted by `WindowChrome`, which also carries the frame and the
+// close notification the restoration record needs.
 
 /// The draggable divider between the timeline and the composer.
 ///

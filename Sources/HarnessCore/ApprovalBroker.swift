@@ -98,7 +98,7 @@ public actor ApprovalBroker {
     public let socketPath: String
     /// The trees this session may write in, from its launch configuration. Empty means the broker
     /// was built without one and each payload's `cwd` stands in.
-    public let workspace: Workspace
+    public let workspace: SessionWorkspace
 
     private let classifier: RiskClassifier
     private let operatorWait: TimeInterval
@@ -112,7 +112,7 @@ public actor ApprovalBroker {
         autoApproval: AutoApproval = .manual,
         machineConfiguration: MachineConfiguration = .none,
         classifier: RiskClassifier = RiskClassifier(),
-        workspace: Workspace = Workspace(roots: []),
+        workspace: SessionWorkspace = SessionWorkspace(roots: []),
         operatorWait: TimeInterval = ApprovalBroker.defaultOperatorWait
     ) {
         self.socketPath = socketPath

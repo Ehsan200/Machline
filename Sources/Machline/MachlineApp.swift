@@ -14,6 +14,8 @@ struct WindowTarget: Hashable, Codable {
     /// empty window returned the first one — including one that had since opened a project and no
     /// longer looked empty at all. A fresh nonce means ⌘N always produces a new window.
     var nonce: String?
+    /// The stored window this one is opening to restore. See `WindowRestoration`.
+    var restoreID: UUID?
 
     var workspace: URL? { workspacePath.map { URL(fileURLWithPath: $0) } }
 
@@ -21,6 +23,18 @@ struct WindowTarget: Hashable, Codable {
         self.workspacePath = workspace?.standardizedFileURL.path
         self.resumeSessionID = resumeSessionID
         self.nonce = isUnique ? UUID().uuidString : nil
+    }
+
+    /// A window opened to put a stored layout back on screen.
+    init(restoreID: UUID) {
+        self.restoreID = restoreID
+        self.nonce = restoreID.uuidString
+    }
+
+    /// True for the window macOS opens by itself at launch: no project, and not one the operator
+    /// asked for with ⌘N. Only that window adopts the stored layout.
+    var isLaunchWindow: Bool {
+        workspacePath == nil && resumeSessionID == nil && nonce == nil && restoreID == nil
     }
 }
 
@@ -100,6 +114,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Waits for a window to exist before it asks anything — see `UpdateScheduler.checkIfDue`.
         UpdateScheduler.shared.start()
     }
+
+    /// Quitting closes every window. Freezing the record first is what keeps ⌘Q from reading as
+    /// "the operator closed all their projects" — see `WindowRestoration`.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated { WindowRestoration.shared.beginTermination() }
+        return .terminateNow
+    }
+
+    /// The app restores its own windows, so it has no secure-coding state of its own to vouch for.
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
     /// Takes the descriptor limit off `launchd`'s floor.
     ///

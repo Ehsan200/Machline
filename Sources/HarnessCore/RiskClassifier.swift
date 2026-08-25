@@ -118,8 +118,10 @@ public struct RiskClassifier: Sendable {
     public init() {}
 
     /// - Parameter workspace: the trees the session may write in. Empty falls back to the payload's
-    ///   own `cwd`, which is only ever a guess — see `Workspace`.
-    public func assess(payload: HookPayload, workspace: Workspace = Workspace(roots: [])) -> Assessment {
+    ///   own `cwd`, which is only ever a guess — see `SessionWorkspace`.
+    public func assess(
+        payload: HookPayload, workspace: SessionWorkspace = SessionWorkspace(roots: [])
+    ) -> Assessment {
         guard let command = payload.bashCommand else {
             return assessNonBashTool(payload: payload, workspace: workspace)
         }
@@ -169,7 +171,7 @@ public struct RiskClassifier: Sendable {
             isOutward: isOutward)
     }
 
-    private func assessNonBashTool(payload: HookPayload, workspace: Workspace) -> Assessment {
+    private func assessNonBashTool(payload: HookPayload, workspace: SessionWorkspace) -> Assessment {
         var signals: [String] = []
         var level = Level.benign
 

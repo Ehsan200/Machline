@@ -10,6 +10,8 @@ import SwiftUI
 struct GitWorkbenchView: View {
     @Bindable var git: GitPanelModel
     @Bindable var model: AppModel
+    /// Only for choosing which conversation a draft forks — see `WindowModel.commitDraftFork(for:)`.
+    @Bindable var window: WindowModel
     @State private var confirmingDiscard: (GitHunk, GitFileDiff)?
     @FocusState private var isFileListFocused: Bool
 
@@ -438,7 +440,7 @@ struct GitWorkbenchView: View {
                     if git.isDrafting {
                         git.cancelDraft()
                     } else {
-                        git.generateDraft(fork: model.commitDraftFork)
+                        git.generateDraft(fork: window.commitDraftFork(for: model))
                     }
                 } label: {
                     HStack(spacing: Theme.Space.xs) {

@@ -90,7 +90,7 @@ public struct AutoApproval: Sendable, Hashable, Codable {
     ///   directory, which is not the same as the operator agreeing to unread writes there.
     public func decision(
         for payload: HookPayload, assessment: RiskClassifier.Assessment,
-        workspace: Workspace = Workspace(roots: [])
+        workspace: SessionWorkspace = SessionWorkspace(roots: [])
     ) -> ApprovalDecision? {
         if Self.editTools.contains(payload.toolName) {
             guard workspaceFileEdits,
@@ -118,7 +118,7 @@ public struct AutoApproval: Sendable, Hashable, Codable {
     /// Paths are resolved before comparison so `..` cannot walk out, and a payload naming no path
     /// is treated as outside — an unrecognised edit shape is a reason to ask, not to assume.
     static func writesInsideWorkspace(
-        _ payload: HookPayload, workspace: Workspace = Workspace(roots: [])
+        _ payload: HookPayload, workspace: SessionWorkspace = SessionWorkspace(roots: [])
     ) -> Bool {
         let roots = workspace.projectOnly.resolved(for: payload)
         guard !roots.isEmpty else { return false }

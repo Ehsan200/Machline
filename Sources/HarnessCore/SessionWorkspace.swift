@@ -10,7 +10,7 @@ import Foundation
 ///
 /// The honest boundary is what the session was launched with: its working directory, plus any
 /// directory explicitly handed to it through `--add-dir`.
-public struct Workspace: Sendable, Hashable {
+public struct SessionWorkspace: Sendable, Hashable {
 
     /// Resolved, standardised roots. Order is not meaningful; the first is used as the anchor for
     /// relative paths when a payload carries no usable `cwd`.
@@ -36,8 +36,8 @@ public struct Workspace: Sendable, Hashable {
     }
 
     /// The project root alone, with `--add-dir` grants excluded.
-    public var projectOnly: Workspace {
-        Workspace(roots: roots.isEmpty ? [] : [roots[0]])
+    public var projectOnly: SessionWorkspace {
+        SessionWorkspace(roots: roots.isEmpty ? [] : [roots[0]])
     }
 
     public var isEmpty: Bool { roots.isEmpty }
@@ -68,10 +68,10 @@ public struct Workspace: Sendable, Hashable {
 
     /// The workspace to judge a payload against: this one, or — when the session's roots are
     /// unknown — the payload's own `cwd`, which is the best available guess.
-    func resolved(for payload: HookPayload) -> Workspace {
+    func resolved(for payload: HookPayload) -> SessionWorkspace {
         guard isEmpty else { return self }
         guard !payload.cwd.isEmpty else { return self }
-        return Workspace(roots: [URL(fileURLWithPath: payload.cwd, isDirectory: true)])
+        return SessionWorkspace(roots: [URL(fileURLWithPath: payload.cwd, isDirectory: true)])
     }
 }
 

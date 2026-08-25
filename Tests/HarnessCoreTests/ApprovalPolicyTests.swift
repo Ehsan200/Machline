@@ -105,7 +105,7 @@ struct ApprovalPolicyTests {
     @Test("A sibling-package edit is inside the workspace even when the cwd has drifted")
     func siblingPackageEditIsInsideWorkspace() {
         let classifier = RiskClassifier()
-        let workspace = Workspace(roots: [URL(fileURLWithPath: "/repo")])
+        let workspace = SessionWorkspace(roots: [URL(fileURLWithPath: "/repo")])
         let sibling = HookPayload(
             sessionID: "s", toolName: "Edit",
             toolInput: .object(["file_path": .string("/repo/apps/web/src/form.tsx")]),
@@ -119,7 +119,7 @@ struct ApprovalPolicyTests {
     @Test("A write outside the session's roots is still flagged")
     func writeOutsideSessionRootsIsFlagged() {
         let classifier = RiskClassifier()
-        let workspace = Workspace(roots: [URL(fileURLWithPath: "/repo")])
+        let workspace = SessionWorkspace(roots: [URL(fileURLWithPath: "/repo")])
         let escape = HookPayload(
             sessionID: "s", toolName: "Edit",
             toolInput: .object(["file_path": .string("/elsewhere/notes.md")]),
@@ -134,7 +134,7 @@ struct ApprovalPolicyTests {
     @Test("A relative path resolves against the cwd before it is judged")
     func relativePathResolvesAgainstCWD() {
         let classifier = RiskClassifier()
-        let workspace = Workspace(roots: [URL(fileURLWithPath: "/repo")])
+        let workspace = SessionWorkspace(roots: [URL(fileURLWithPath: "/repo")])
         let relative = HookPayload(
             sessionID: "s", toolName: "Edit",
             toolInput: .object(["file_path": .string("src/form.tsx")]),
@@ -155,7 +155,7 @@ struct ApprovalPolicyTests {
     @Test("An --add-dir grant counts as workspace for the signal")
     func additionalDirectoryIsNotAnEscape() {
         let classifier = RiskClassifier()
-        let workspace = Workspace(roots: [
+        let workspace = SessionWorkspace(roots: [
             URL(fileURLWithPath: "/repo"), URL(fileURLWithPath: "/grants")
         ])
         let granted = HookPayload(

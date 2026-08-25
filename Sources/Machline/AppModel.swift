@@ -1003,18 +1003,32 @@ final class AppModel: Identifiable {
     ///
     /// The transcript on disk is only reread when the child exits, so this is the only record of
     /// activity in a session that is still going. `nil` until this window sends something.
-    private var liveActivityAt: Date?
+    private(set) var liveActivityAt: Date?
 
-    /// The conversation a commit draft should fork: the one running here, or failing that the
-    /// project's most recently active one.
+    /// The conversation *this tab* can hand a drafter, if it has one.
     ///
-    /// Forking beats a cold run twice over — the agent already knows why it made these changes,
-    /// and the provider's cache already holds the conversation, so the drafting call sends a short
-    /// prompt instead of the whole patch. `nil` means there is nothing to fork and the draft runs
-    /// cold on the small model.
-    var commitDraftFork: CommitDraftGenerator.Fork? {
+    /// Only ids with a transcript behind them. `liveSessionID` falls back to the id this tab asked
+    /// the CLI for, which before the handshake names a file that does not exist yet — `--resume` on
+    /// it fails outright, and a drafting run that fails is worse than one that starts cold.
+    ///
+    /// See `WindowModel.commitDraftFork(for:)` for how a window chooses between its tabs.
+    var forkableSessionID: String? {
+        if case .root(let id)? = graph.root?.kind, !id.isEmpty { return id.lowercased() }
+        if let resumedFrom { return resumedFrom.id.lowercased() }
+        return nil
+    }
+
+    /// When this tab last had activity, for choosing between tabs that both have a conversation.
+    var lastActivityAt: Date? { liveActivityAt ?? resumedFrom?.lastActivityAt }
+
+    /// The project's most recently recorded conversation — the last resort for a window whose own
+    /// tabs have never run anything.
+    ///
+    /// Project-scoped by construction: `projectSessions` is the transcript store filtered to this
+    /// workspace, most recent first.
+    var projectDraftFork: CommitDraftGenerator.Fork? {
         guard let workspace = workspace?.url else { return nil }
-        guard let id = liveSessionID ?? projectSessions.first?.id, !id.isEmpty else { return nil }
+        guard let id = projectSessions.first?.id, !id.isEmpty else { return nil }
         return CommitDraftGenerator.Fork(sessionID: id, workingDirectory: workspace)
     }
 
@@ -1121,6 +1135,35 @@ final class AppModel: Identifiable {
         if model == nil, let recorded = session.model { model = recorded }
         loadReplay(of: session)
         startSession(resuming: SessionConfiguration.Resume(sessionID: session.id, fork: fork))
+    }
+
+    /// Reopens a recorded conversation for reading, without starting a child process.
+    ///
+    /// What a restored tab gets. The conversation may not be in `projectSessions` yet — history is
+    /// read off the main actor — so this waits for the read rather than silently landing on an
+    /// empty tab.
+    func show(recorded id: String) {
+        guard workspace != nil, session == nil else { return }
+        Task { @MainActor in
+            await waitForHistory()
+            guard session == nil,
+                  let recorded = projectSessions.first(where: {
+                      $0.id.caseInsensitiveCompare(id) == .orderedSame
+                  })
+            else { return }
+            resumedFrom = recorded
+            if model == nil, let recordedModel = recorded.model { model = recordedModel }
+            loadReplay(of: recorded)
+        }
+    }
+
+    /// The conversation this tab should come back on after a relaunch.
+    ///
+    /// Read from what the tab was opened on rather than from the live agent tree: the tree's root
+    /// id arrives with the handshake and then changes with the conversation, and anything watching
+    /// this value would be woken by every streamed frame.
+    var restorableSessionID: String? {
+        resumedFrom?.id.lowercased() ?? sessionID?.uuidString.lowercased()
     }
 
     /// Reads a recorded conversation for display. Off the main actor: transcripts run to megabytes.

@@ -10,6 +10,9 @@ import SwiftUI
 struct ContentView: View {
     @Binding var target: WindowTarget
 
+    /// Restoring a stored session opens the windows beyond the first one.
+    @Environment(\.openWindow) private var openWindow
+
     /// One window holds one project's sessions, each with its own child process and approval
     /// broker. Tabs are drawn by the app; see `WindowModel` for why not AppKit's.
     ///
@@ -63,9 +66,15 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .tint(Theme.Colors.accent)
         .navigationTitle(model.windowTitle)
-        .background(WindowBackground())
+        .background(WindowChrome(window: window))
         .focusedSceneValue(\.windowModel, window)
         .task { await adopt(target) }
+        // One watcher for the whole window rather than a callback on every mutation: the signature
+        // is built from settled state, so this fires when a project or a conversation changes and
+        // not while output is streaming.
+        .onChange(of: window.layoutSignature, initial: true) { _, _ in
+            window.noteLayoutChanged()
+        }
         // The approval sheet is deliberately modal: an approval that can be ignored is an approval
         // that eventually gets rubber-stamped or times out.
         .sheet(item: ApprovalBinding(model: model)) { pending in
@@ -125,6 +134,26 @@ struct ContentView: View {
     private func adopt(_ target: WindowTarget) async {
         guard model.workspace == nil else { return }
         model.loadRecentProjects()
+
+        // A window opened to restore a stored layout, by the launch window below.
+        if let restoreID = target.restoreID {
+            if let layout = WindowRestoration.shared.claim(id: restoreID) { window.restore(layout) }
+            return
+        }
+
+        // The window macOS opens at launch takes the first stored layout and opens the rest, so
+        // quitting with three projects open comes back as three windows.
+        if target.isLaunchWindow, WindowRestoration.shared.hasLaunchLayouts {
+            let layouts = WindowRestoration.shared.takeLaunchLayouts()
+            if let first = layouts.first {
+                window.restore(first)
+                for layout in layouts.dropFirst() {
+                    openWindow(id: "session", value: WindowTarget(restoreID: layout.id))
+                }
+                return
+            }
+        }
+
         guard let workspace = target.workspace else { return }
         model.open(workspace: workspace)
 

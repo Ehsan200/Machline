@@ -51,7 +51,7 @@ struct RunPanelView: View {
                         isExpanded: $isGitExpanded
                     ) {
                         if let git = model.git {
-                            GitWorkbenchView(git: git, model: model)
+                            GitWorkbenchView(git: git, model: model, window: window)
                         } else {
                             emptyNote("Open a project to use the Git workbench.")
                         }

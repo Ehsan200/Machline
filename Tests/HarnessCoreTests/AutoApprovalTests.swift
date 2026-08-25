@@ -181,7 +181,7 @@ struct AutoApprovalTests {
     @Test("An edit is auto-approved from a drifted cwd inside the session root")
     func editIsApprovedFromDriftedCWD() {
         let mode = AutoApproval(workspaceFileEdits: true)
-        let workspace = Workspace(roots: [URL(fileURLWithPath: "/repo")])
+        let workspace = SessionWorkspace(roots: [URL(fileURLWithPath: "/repo")])
         let payload = edit(path: "/repo/apps/web/src/form.tsx", cwd: "/repo/apps/api")
         let assessment = classifier.assess(payload: payload, workspace: workspace)
         #expect(mode.decision(for: payload, assessment: assessment, workspace: workspace)?.verdict
@@ -193,7 +193,7 @@ struct AutoApprovalTests {
     @Test("An edit in an --add-dir grant is not auto-approved")
     func editInAdditionalDirectoryAsks() {
         let mode = AutoApproval(workspaceFileEdits: true)
-        let workspace = Workspace(roots: [
+        let workspace = SessionWorkspace(roots: [
             URL(fileURLWithPath: "/repo"), URL(fileURLWithPath: "/grants")
         ])
         let payload = edit(path: "/grants/shot.png", cwd: "/repo")

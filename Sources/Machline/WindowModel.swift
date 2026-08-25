@@ -18,6 +18,19 @@ final class WindowModel {
     private(set) var tabs: [AppModel] = []
     private(set) var selection = 0
 
+    /// This window's identity in the restoration record. Adopting a stored layout adopts its id, so
+    /// the window keeps updating the same entry rather than adding a second one for itself.
+    private(set) var id = UUID()
+
+    /// Where the window should be put back, until the chrome has an `NSWindow` to put it on.
+    private var pendingFrame: String?
+    /// The last frame that was known, so a record written before AppKit has a window to ask —
+    /// which is every window's first one — carries the frame it was restored with rather than
+    /// dropping it.
+    private var lastFrame: String?
+    /// Reads the live window's frame. Set by `WindowChrome`; `nil` before the window exists.
+    var frameProvider: (@MainActor () -> String?)?
+
     /// Whether the session rail is showing. Chrome belongs to the window, not to a tab: hiding a
     /// rail and having it come back on the next tab would be a setting that does not hold.
     var isSessionRailVisible = true {
@@ -43,6 +56,71 @@ final class WindowModel {
 
     func toggleSessionRail() { isSessionRailVisible.toggle() }
     func toggleRunPanel() { isRunPanelVisible.toggle() }
+
+    // MARK: - Restoration
+
+    /// What this window would come back as. See `WindowRestoration` for why the app keeps its own
+    /// record rather than leaving it to AppKit.
+    func snapshot() -> WindowLayout {
+        lastFrame = frameProvider?() ?? lastFrame
+        return WindowLayout(
+            id: id,
+            tabs: tabs.map {
+                WindowLayout.Tab(workspace: $0.workspace?.url, sessionID: $0.restorableSessionID)
+            },
+            selection: selection,
+            frame: lastFrame)
+    }
+
+    /// Files the window's current shape. Cheap: the store coalesces writes.
+    func noteLayoutChanged() {
+        WindowRestoration.shared.record(snapshot())
+    }
+
+    /// A value that changes exactly when something the record holds changes, so a view can watch
+    /// one thing rather than every tab.
+    ///
+    /// Deliberately built from settled state — the project, the conversation a tab was opened on —
+    /// and never from the live agent tree, which changes with every streamed frame. A window that
+    /// re-derived its layout at that rate would cost the timeline its frame rate.
+    var layoutSignature: String {
+        tabs
+            .map { "\($0.workspace?.url.path ?? "")#\($0.restorableSessionID ?? "")" }
+            .joined(separator: "|")
+            + "@\(selection)"
+    }
+
+    /// Rebuilds the window from a stored layout: its project, its tabs, and the conversation each
+    /// tab was reading.
+    ///
+    /// Nothing is started. The agents that were running died with the app, so a restored tab is in
+    /// the same state a stopped one is — transcript on screen, one click from resuming.
+    func restore(_ layout: WindowLayout) {
+        let restored: [AppModel] = layout.tabs.compactMap { tab in
+            guard let workspace = tab.workspace,
+                  FileManager.default.fileExists(atPath: workspace.path)
+            else { return nil }
+            let model = AppModel()
+            model.open(workspace: workspace)
+            if let sessionID = tab.sessionID { model.show(recorded: sessionID) }
+            return model
+        }
+        guard !restored.isEmpty else { return }
+
+        for tab in tabs { tab.stop() }
+        id = layout.id
+        tabs = restored
+        selection = min(max(layout.selection, 0), restored.count - 1)
+        pendingFrame = layout.frame
+        lastFrame = layout.frame
+        noteLayoutChanged()
+    }
+
+    /// The frame a restored window should be put back at, handed over once.
+    func takePendingFrame() -> String? {
+        defer { pendingFrame = nil }
+        return pendingFrame
+    }
 
     /// The session in front, or `nil` only during the instant `close` holds no tabs.
     ///
@@ -136,6 +214,46 @@ final class WindowModel {
 
     func closeCurrent() {
         close(selection)
+    }
+
+    // MARK: - Commit drafting
+
+    /// The conversation a commit draft in `tab` should fork.
+    ///
+    /// Forking beats a cold run twice over — the agent already watched the work happen, and the
+    /// provider's cache already holds the conversation, so the drafting call sends a short prompt
+    /// instead of the whole patch. What matters is forking the *right* conversation, and that is a
+    /// question about this window: the tab's own, then the most recently active of its siblings on
+    /// the same project, and only then the project's newest transcript.
+    ///
+    /// Reaching straight for the project's newest was wrong in the case that matters — two windows
+    /// on one repository, each with its own work in flight — because the draft was written by
+    /// whichever window had typed most recently rather than by the one being committed from.
+    /// `nil` means there is nothing to fork and the draft runs cold on the small model.
+    func commitDraftFork(for tab: AppModel) -> CommitDraftGenerator.Fork? {
+        guard let workspace = tab.workspace?.url else { return nil }
+
+        if let sessionID = tab.forkableSessionID {
+            return CommitDraftGenerator.Fork(sessionID: sessionID, workingDirectory: workspace)
+        }
+
+        let sibling = tabs
+            .filter {
+                $0 !== tab
+                    && $0.workspace?.url.standardizedFileURL == workspace.standardizedFileURL
+            }
+            .compactMap { other in
+                other.forkableSessionID.map {
+                    (sessionID: $0, activityAt: other.lastActivityAt ?? .distantPast)
+                }
+            }
+            .max { $0.activityAt < $1.activityAt }
+        if let sibling {
+            return CommitDraftGenerator.Fork(
+                sessionID: sibling.sessionID, workingDirectory: workspace)
+        }
+
+        return tab.projectDraftFork
     }
 
     func selectNextTab() {
