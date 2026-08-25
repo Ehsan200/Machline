@@ -67,7 +67,9 @@ public actor AgentSession {
 
         broker = ApprovalBroker(
             socketPath: socketPath, policy: policy, autoApproval: autoApproval,
-            machineConfiguration: machineConfiguration, operatorWait: operatorWait)
+            machineConfiguration: machineConfiguration,
+            workspace: Workspace(configuration: configuration),
+            operatorWait: operatorWait)
         supervisor = SessionSupervisor(configuration: configuration)
     }
 

@@ -96,6 +96,9 @@ public actor ApprovalBroker {
     /// The machine's own permission rules, when the session inherits them.
     public private(set) var machineConfiguration: MachineConfiguration
     public let socketPath: String
+    /// The trees this session may write in, from its launch configuration. Empty means the broker
+    /// was built without one and each payload's `cwd` stands in.
+    public let workspace: Workspace
 
     private let classifier: RiskClassifier
     private let operatorWait: TimeInterval
@@ -109,9 +112,11 @@ public actor ApprovalBroker {
         autoApproval: AutoApproval = .manual,
         machineConfiguration: MachineConfiguration = .none,
         classifier: RiskClassifier = RiskClassifier(),
+        workspace: Workspace = Workspace(roots: []),
         operatorWait: TimeInterval = ApprovalBroker.defaultOperatorWait
     ) {
         self.socketPath = socketPath
+        self.workspace = workspace
         self.policy = policy
         self.autoApproval = autoApproval
         self.machineConfiguration = machineConfiguration
@@ -217,8 +222,9 @@ public actor ApprovalBroker {
                 provenance: .machineAllowlist)
         }
 
-        let assessment = classifier.assess(payload: request.payload)
-        if let decision = autoApproval.decision(for: request.payload, assessment: assessment) {
+        let assessment = classifier.assess(payload: request.payload, workspace: workspace)
+        if let decision = autoApproval.decision(
+            for: request.payload, assessment: assessment, workspace: workspace) {
             return decision
         }
 

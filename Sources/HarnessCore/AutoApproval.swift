@@ -85,11 +85,16 @@ public struct AutoApproval: Sendable, Hashable, Codable {
     ///
     /// Only ever returns an allow: a mode that could deny on its own would be a second, invisible
     /// denylist competing with `PolicyStore`.
+    /// - Parameter workspace: the trees the session may write in. Empty falls back to the payload's
+    ///   own `cwd`. Only the project root counts here: a `--add-dir` grant lets the agent *reach* a
+    ///   directory, which is not the same as the operator agreeing to unread writes there.
     public func decision(
-        for payload: HookPayload, assessment: RiskClassifier.Assessment
+        for payload: HookPayload, assessment: RiskClassifier.Assessment,
+        workspace: Workspace = Workspace(roots: [])
     ) -> ApprovalDecision? {
         if Self.editTools.contains(payload.toolName) {
-            guard workspaceFileEdits, Self.writesInsideWorkspace(payload) else { return nil }
+            guard workspaceFileEdits,
+                  Self.writesInsideWorkspace(payload, workspace: workspace) else { return nil }
             return ApprovalDecision(
                 verdict: .allow,
                 reason: "Auto-approved: file edit inside the workspace.",
@@ -108,28 +113,18 @@ public struct AutoApproval: Sendable, Hashable, Codable {
             provenance: .autoApproved)
     }
 
-    /// Whether every path the tool would write lies inside the session's working directory.
+    /// Whether every path the tool would write lies inside the session's own tree.
     ///
     /// Paths are resolved before comparison so `..` cannot walk out, and a payload naming no path
     /// is treated as outside — an unrecognised edit shape is a reason to ask, not to assume.
-    static func writesInsideWorkspace(_ payload: HookPayload) -> Bool {
-        guard !payload.cwd.isEmpty else { return false }
-        let root = URL(fileURLWithPath: payload.cwd).standardizedFileURL.resolvingSymlinksInPath()
-
-        var candidates: [String] = []
-        if let path = payload.toolInput["file_path"]?.stringValue { candidates.append(path) }
-        if let path = payload.toolInput["notebook_path"]?.stringValue { candidates.append(path) }
+    static func writesInsideWorkspace(
+        _ payload: HookPayload, workspace: Workspace = Workspace(roots: [])
+    ) -> Bool {
+        let roots = workspace.projectOnly.resolved(for: payload)
+        guard !roots.isEmpty else { return false }
+        let candidates = payload.writePaths
         guard !candidates.isEmpty else { return false }
-
-        return candidates.allSatisfy { candidate in
-            let resolved = URL(fileURLWithPath: candidate, relativeTo: root)
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
-            // Compare on path components so `/work` does not appear to contain `/workspace`.
-            let rootParts = root.pathComponents
-            let parts = resolved.pathComponents
-            return parts.count > rootParts.count && Array(parts.prefix(rootParts.count)) == rootParts
-        }
+        return candidates.allSatisfy { roots.contains(path: $0, base: payload.cwd) }
     }
 }
 

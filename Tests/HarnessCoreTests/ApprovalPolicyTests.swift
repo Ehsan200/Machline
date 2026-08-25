@@ -99,6 +99,74 @@ struct ApprovalPolicyTests {
         #expect(classifier.assess(payload: outside).signals.contains("writes outside the workspace"))
     }
 
+    /// The bug this replaced: containment was judged against the payload's `cwd`, so an agent
+    /// standing in one package of a monorepo appeared to escape the workspace the moment it edited
+    /// a sibling — a destructive banner on an ordinary edit.
+    @Test("A sibling-package edit is inside the workspace even when the cwd has drifted")
+    func siblingPackageEditIsInsideWorkspace() {
+        let classifier = RiskClassifier()
+        let workspace = Workspace(roots: [URL(fileURLWithPath: "/repo")])
+        let sibling = HookPayload(
+            sessionID: "s", toolName: "Edit",
+            toolInput: .object(["file_path": .string("/repo/apps/web/src/form.tsx")]),
+            toolUseID: "t", cwd: "/repo/apps/api")
+
+        let assessment = classifier.assess(payload: sibling, workspace: workspace)
+        #expect(assessment.level == .privileged)
+        #expect(!assessment.signals.contains("writes outside the workspace"))
+    }
+
+    @Test("A write outside the session's roots is still flagged")
+    func writeOutsideSessionRootsIsFlagged() {
+        let classifier = RiskClassifier()
+        let workspace = Workspace(roots: [URL(fileURLWithPath: "/repo")])
+        let escape = HookPayload(
+            sessionID: "s", toolName: "Edit",
+            toolInput: .object(["file_path": .string("/elsewhere/notes.md")]),
+            toolUseID: "t", cwd: "/repo/apps/api")
+
+        #expect(classifier.assess(payload: escape, workspace: workspace)
+            .signals.contains("writes outside the workspace"))
+    }
+
+    /// A path relative to the cwd resolves before comparison; the old prefix test called every one
+    /// of them an escape.
+    @Test("A relative path resolves against the cwd before it is judged")
+    func relativePathResolvesAgainstCWD() {
+        let classifier = RiskClassifier()
+        let workspace = Workspace(roots: [URL(fileURLWithPath: "/repo")])
+        let relative = HookPayload(
+            sessionID: "s", toolName: "Edit",
+            toolInput: .object(["file_path": .string("src/form.tsx")]),
+            toolUseID: "t", cwd: "/repo/apps/api")
+        let walkingOut = HookPayload(
+            sessionID: "s", toolName: "Edit",
+            toolInput: .object(["file_path": .string("../../../etc/hosts")]),
+            toolUseID: "t", cwd: "/repo/apps/api")
+
+        #expect(!classifier.assess(payload: relative, workspace: workspace)
+            .signals.contains("writes outside the workspace"))
+        #expect(classifier.assess(payload: walkingOut, workspace: workspace)
+            .signals.contains("writes outside the workspace"))
+    }
+
+    /// A directory handed to the session with `--add-dir` — a dragged attachment, say — is not an
+    /// escape, even though it sits outside the project.
+    @Test("An --add-dir grant counts as workspace for the signal")
+    func additionalDirectoryIsNotAnEscape() {
+        let classifier = RiskClassifier()
+        let workspace = Workspace(roots: [
+            URL(fileURLWithPath: "/repo"), URL(fileURLWithPath: "/grants")
+        ])
+        let granted = HookPayload(
+            sessionID: "s", toolName: "Write",
+            toolInput: .object(["file_path": .string("/grants/shot.png")]),
+            toolUseID: "t", cwd: "/repo")
+
+        #expect(!classifier.assess(payload: granted, workspace: workspace)
+            .signals.contains("writes outside the workspace"))
+    }
+
     /// Probe-verified payload shape; guards against a field rename silently emptying the sheet.
     @Test("The archived hook payload decodes into the sheet's fields")
     func archivedHookPayloadDecodes() throws {

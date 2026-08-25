@@ -117,9 +117,11 @@ public struct RiskClassifier: Sendable {
 
     public init() {}
 
-    public func assess(payload: HookPayload) -> Assessment {
+    /// - Parameter workspace: the trees the session may write in. Empty falls back to the payload's
+    ///   own `cwd`, which is only ever a guess — see `Workspace`.
+    public func assess(payload: HookPayload, workspace: Workspace = Workspace(roots: [])) -> Assessment {
         guard let command = payload.bashCommand else {
-            return assessNonBashTool(payload: payload)
+            return assessNonBashTool(payload: payload, workspace: workspace)
         }
         return assess(command: command)
     }
@@ -167,7 +169,7 @@ public struct RiskClassifier: Sendable {
             isOutward: isOutward)
     }
 
-    private func assessNonBashTool(payload: HookPayload) -> Assessment {
+    private func assessNonBashTool(payload: HookPayload, workspace: Workspace) -> Assessment {
         var signals: [String] = []
         var level = Level.benign
 
@@ -179,9 +181,13 @@ public struct RiskClassifier: Sendable {
             signals.append("MCP tool")
             if level == .benign { level = .network }
         }
-        // A write escaping the workspace is worth flagging regardless of tool.
-        if let path = payload.toolInput["file_path"]?.stringValue,
-           !payload.cwd.isEmpty, !path.hasPrefix(payload.cwd) {
+        // A write escaping the workspace is worth flagging regardless of tool. Judged against the
+        // session's roots, not its current directory: an agent that has walked into a subdirectory
+        // has not left the project, and saying it has cries wolf on every sibling-package edit.
+        let roots = workspace.resolved(for: payload)
+        let paths = payload.writePaths
+        if !roots.isEmpty, !paths.isEmpty,
+           !paths.allSatisfy({ roots.contains(path: $0, base: payload.cwd) }) {
             signals.append("writes outside the workspace")
             level = .destructive
         }

@@ -176,6 +176,31 @@ struct AutoApprovalTests {
         #expect(decision(mode, payload) == nil)
     }
 
+    /// Containment is judged against the session's root, not the directory the agent is standing
+    /// in — otherwise auto mode prompts for a sibling-package edit it had already agreed to.
+    @Test("An edit is auto-approved from a drifted cwd inside the session root")
+    func editIsApprovedFromDriftedCWD() {
+        let mode = AutoApproval(workspaceFileEdits: true)
+        let workspace = Workspace(roots: [URL(fileURLWithPath: "/repo")])
+        let payload = edit(path: "/repo/apps/web/src/form.tsx", cwd: "/repo/apps/api")
+        let assessment = classifier.assess(payload: payload, workspace: workspace)
+        #expect(mode.decision(for: payload, assessment: assessment, workspace: workspace)?.verdict
+            == .allow)
+    }
+
+    /// A `--add-dir` grant lets the agent reach a directory. That is not the operator agreeing to
+    /// unread writes there, so those still ask.
+    @Test("An edit in an --add-dir grant is not auto-approved")
+    func editInAdditionalDirectoryAsks() {
+        let mode = AutoApproval(workspaceFileEdits: true)
+        let workspace = Workspace(roots: [
+            URL(fileURLWithPath: "/repo"), URL(fileURLWithPath: "/grants")
+        ])
+        let payload = edit(path: "/grants/shot.png", cwd: "/repo")
+        let assessment = classifier.assess(payload: payload, workspace: workspace)
+        #expect(mode.decision(for: payload, assessment: assessment, workspace: workspace) == nil)
+    }
+
     @Test("Edit auto-approval does not leak into shell commands")
     func editSettingDoesNotCoverBash() {
         let mode = AutoApproval(workspaceFileEdits: true)
