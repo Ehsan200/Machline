@@ -35,9 +35,23 @@ final class WindowRestoration {
     private var unclaimed: [WindowLayout]
     private var pending: [UUID: WindowLayout] = [:]
     private var writer: Task<Void, Never>?
+    /// Windows the operator closed. A closed window is not merely dropped from `live`: a view tree
+    /// coming down is still a view tree, and one last layout report on the way out would put the
+    /// window straight back into the record it was just removed from.
+    private var closed: Set<UUID> = []
+    /// The windows being watched for their close, by the window object. See `watchClose`.
+    private var watched: [ObjectIdentifier: CloseWatch] = [:]
     /// Set the moment the app is on its way out, so the windows AppKit closes on the way are not
     /// mistaken for windows the operator closed.
     private var isTerminating = false
+
+    /// One window's close observation: the token to release, and the model whose id the close is
+    /// reported against. The model is held rather than weakly referenced because it is what the id
+    /// is read from, and it is let go the moment the window closes.
+    private struct CloseWatch {
+        let token: any NSObjectProtocol
+        let model: WindowModel
+    }
 
     init(store: WindowLayoutStore = WindowLayoutStore()) {
         self.store = store
@@ -77,22 +91,56 @@ final class WindowRestoration {
     /// would empty the file the launch window is about to restore *from*, since that window reports
     /// itself before it has adopted anything.
     func record(_ layout: WindowLayout) {
-        guard !isTerminating, layout.isRestorable else { return }
+        guard !isTerminating, !closed.contains(layout.id), layout.isRestorable else { return }
         if live.updateValue(layout, forKey: layout.id) == nil { order.append(layout.id) }
         scheduleWrite()
+    }
+
+    /// Watches a window for its close, from an object that outlives the view tree.
+    ///
+    /// The natural home for this is the chrome's coordinator, beside the move and resize observers,
+    /// and that is where it was — where it never fired. SwiftUI observes `willClose` itself, from a
+    /// registration made when the window was created, which is before the chrome has a view at all;
+    /// its handler tears the window's view tree down, and that takes the coordinator, its observer
+    /// bag, and the bag's `deinit` with it. `NotificationCenter` does not deliver to an observer
+    /// removed while the notification is being posted, so the app heard about every window that
+    /// moved and none that closed: a project the operator closed was still in the record at the
+    /// next launch, and came back. Observing from here settles the ordering question — this object
+    /// is never torn down.
+    func watchClose(of nsWindow: NSWindow, model: WindowModel) {
+        let key = ObjectIdentifier(nsWindow)
+        guard watched[key] == nil else { return }
+        let token = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nsWindow, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { WindowRestoration.shared.noteClosed(key) }
+        }
+        watched[key] = CloseWatch(token: token, model: model)
+    }
+
+    private func noteClosed(_ key: ObjectIdentifier) {
+        guard let watch = watched.removeValue(forKey: key) else { return }
+        NotificationCenter.default.removeObserver(watch.token)
+        forget(id: watch.model.id)
     }
 
     /// Forgets a window the operator closed.
     ///
     /// Ignored once the app is terminating: quitting closes every window, and treating that as the
-    /// operator emptying their workspace is exactly the bug this type exists to fix. The write is
-    /// coalesced rather than immediate for the same reason — a shutdown that closes windows before
-    /// the app is told it is quitting gets its writes cancelled instead of landing.
+    /// operator emptying their workspace is exactly the bug this type exists to fix.
+    ///
+    /// Written at once rather than coalesced. A close is a single deliberate act, not the burst a
+    /// drag is, and the 400 ms of settling was long enough to lose it: closing the last window and
+    /// quitting in the same breath cancelled the pending write, and `beginTermination` will not
+    /// write an empty record — so the file kept the window that had just been closed.
     func forget(id: UUID) {
         guard !isTerminating else { return }
+        closed.insert(id)
         guard live.removeValue(forKey: id) != nil else { return }
         order.removeAll { $0 == id }
-        scheduleWrite()
+        writer?.cancel()
+        writer = nil
+        store.save(orderedLayouts())
     }
 
     /// Freezes the record and flushes it. Called as the app begins to quit.
@@ -126,8 +174,8 @@ final class WindowRestoration {
     }
 }
 
-/// The window itself: its background, its frame, and the two things only AppKit can report —
-/// that it moved, and that it closed.
+/// The window itself: its background, its frame, and the moves only AppKit can report. Its close is
+/// watched by `WindowRestoration`, which outlives the view tree the close destroys.
 ///
 /// SwiftUI has no window object to hold, so this reaches the `NSWindow` through a zero-sized view.
 /// It also switches the system's own restoration off: this app restores its windows from
@@ -190,11 +238,9 @@ struct WindowChrome: NSViewRepresentable {
                     MainActor.assumeIsolated { model.noteLayoutChanged() }
                 })
             }
-            observers.tokens.append(center.addObserver(
-                forName: NSWindow.willCloseNotification, object: nsWindow, queue: .main
-            ) { _ in
-                MainActor.assumeIsolated { WindowRestoration.shared.forget(id: model.id) }
-            })
+            // Not one of the observers above: a closing window takes this coordinator with it
+            // before the notification is delivered. See `WindowRestoration.watchClose`.
+            WindowRestoration.shared.watchClose(of: nsWindow, model: model)
         }
     }
 }
