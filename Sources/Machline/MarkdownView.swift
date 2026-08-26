@@ -352,6 +352,7 @@ struct MarkdownProse: View {
 
     var body: some View {
         Text(ProseCache.attributed(for: blocks, color: textColor, storing: storing) { build() })
+            .lineSpacing(Theme.Typography.proseLineSpacing)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -378,9 +379,7 @@ struct MarkdownProse: View {
                 output.append(list(items) { "\($0 + 1)." })
 
             case .quote(let text):
-                var piece = inline(text, color: Theme.Colors.muted)
-                piece.mergeAttributes(container(indent: 18, marker: 18))
-                output.append(piece)
+                output.append(inline(text, color: Theme.Colors.muted))
 
             case .rule:
                 var piece = AttributedString("────────")
@@ -394,6 +393,13 @@ struct MarkdownProse: View {
         return output
     }
 
+    /// A marker and its item, joined by a no-break space so the two never land on separate lines.
+    ///
+    /// No hanging indent: a wrapped item returns to the margin. SwiftUI's `Text` drops the AppKit
+    /// paragraph-style attribute entirely — `headIndent` and `tabStops` were both silently ignored,
+    /// which is what made the tab render at the default stop and throw the marker away from its
+    /// text. Hanging it properly means one view per item, and that costs the single-`Text` selection
+    /// this whole type exists to preserve.
     private func list(
         _ items: [String], marker: (Int) -> String
     ) -> AttributedString {
@@ -401,33 +407,14 @@ struct MarkdownProse: View {
         for (index, item) in items.enumerated() {
             if index > 0 { output.append(AttributedString("\n")) }
 
-            var bullet = AttributedString("\(marker(index))\t")
+            var bullet = AttributedString("\(marker(index))\u{00A0}")
             bullet.foregroundColor = Theme.Colors.accent
             bullet.font = Theme.Typography.prose
 
-            var body = inline(item, color: textColor)
-            // The hanging indent keeps a wrapped item aligned under its own text, not under
-            // the bullet.
-            body.mergeAttributes(container(indent: 22, marker: 0))
-            bullet.mergeAttributes(container(indent: 22, marker: 0))
-
             output.append(bullet)
-            output.append(body)
+            output.append(inline(item, color: textColor))
         }
         return output
-    }
-
-    /// Paragraph styling, which `AttributedString` carries through the AppKit attribute scope.
-    private func container(indent: CGFloat, marker: CGFloat) -> AttributeContainer {
-        let style = NSMutableParagraphStyle()
-        style.headIndent = indent
-        style.firstLineHeadIndent = marker
-        style.lineSpacing = Theme.Typography.proseLineSpacing
-        style.tabStops = [NSTextTab(textAlignment: .left, location: indent)]
-
-        var attributes = AttributeContainer()
-        attributes.appKit.paragraphStyle = style
-        return attributes
     }
 
     private func inline(_ source: String, color: Color) -> AttributedString {
