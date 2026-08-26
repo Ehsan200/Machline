@@ -248,7 +248,7 @@ struct HomeView: View {
 
             HStack(spacing: Theme.Space.sm) {
                 // Says what this is without a paragraph explaining it.
-                Label("no project · no tools", systemImage: "shield")
+                Label("no project · scratch folder", systemImage: "tray")
                     .font(Theme.Typography.meta)
                     .foregroundStyle(Theme.Colors.subtle)
                     .labelStyle(.titleAndIcon)

@@ -1,6 +1,6 @@
 import Foundation
 
-/// A project-less place to talk to the agent.
+/// A project-less place to work with the agent.
 ///
 /// Every session needs a working directory — it is what the CLI files the transcript under and
 /// what the agent's own commands run in. That makes "just ask it something" awkward: opening a real
@@ -9,7 +9,7 @@ import Foundation
 ///
 /// So there is one scratch directory, kept rather than discarded: its conversations accumulate in
 /// the CLI's store like any project's, which is what makes yesterday's throwaway question findable
-/// today.
+/// today. A session here has its ordinary tools; this directory is what they are pointed at.
 public struct ScratchWorkspace: Sendable {
 
     public let url: URL
@@ -40,10 +40,10 @@ public struct ScratchWorkspace: Sendable {
             try? """
                 # Scratch
 
-                Machline's scratch workspace: a working directory for conversations that do not
-                belong to any project. Nothing here is precious — it exists so a question can be
-                asked without opening a repository and without the answer landing in that
-                repository's history.
+                Machline's scratch workspace: a working directory for sessions that do not belong
+                to any project. Nothing here is precious — it exists so a question can be asked, or
+                a throwaway script run, without opening a repository and without the answer landing
+                in that repository's history.
 
                 Files the agent writes here are safe to delete.
                 """.write(to: note, atomically: true, encoding: .utf8)

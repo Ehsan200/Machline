@@ -879,11 +879,6 @@ final class AppModel: Identifiable {
     }
 
     func open(workspace url: URL) {
-        // Opening a real project ends whatever made this a scratch window.
-        if workspace?.url != url, !ScratchWorkspace().url.standardizedFileURL.path
-            .elementsEqual(url.standardizedFileURL.path) {
-            isScratch = false
-        }
         workspace = Workspace(url: url)
         git = GitPanelModel(workspace: url)
         git?.refresh()
@@ -957,21 +952,17 @@ final class AppModel: Identifiable {
         }
     }
 
-    /// True while this window is a scratch chat rather than work on a project.
-    private(set) var isScratch = false
-
-    /// Opens the scratch workspace and starts a chat in it.
+    /// Opens the scratch workspace and starts a session in it.
     ///
-    /// Chat only: the session launches with an empty tool set, so it can read nothing, write
-    /// nothing, and run nothing. That is what makes it safe to ask an unrelated question without
-    /// choosing a project first — there is no working tree for a tool to wander into.
+    /// An ordinary session that happens to have no project: the tools are all there, and what
+    /// bounds them is the working directory, which is a directory whose own README says nothing in
+    /// it is precious. Reaching outside it goes through the approval gate like anywhere else.
     func openScratch(startingWith prompt: String? = nil) {
         let scratch = ScratchWorkspace()
         guard let url = try? scratch.prepare() else {
             archiveError = "Could not create the scratch workspace."
             return
         }
-        isScratch = true
         open(workspace: url)
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             promptDraft = prompt
@@ -1293,8 +1284,7 @@ final class AppModel: Identifiable {
         do {
             let (session, id) = try Self.makeSession(
                 workspace: workspace.url, model: model, mcp: mcp, resume: resume,
-                autoApproval: autoApproval, isolation: isolation, billing: billing,
-                isChatOnly: isScratch)
+                autoApproval: autoApproval, isolation: isolation, billing: billing)
             self.session = session
             self.sessionID = id
             self.activeModel = .some(model)
@@ -1312,8 +1302,7 @@ final class AppModel: Identifiable {
         resume: SessionConfiguration.Resume? = nil,
         autoApproval: AutoApproval = .manual,
         isolation: SessionConfiguration.Isolation = .inherited,
-        billing: SessionConfiguration.Billing = .subscription,
-        isChatOnly: Bool = false
+        billing: SessionConfiguration.Billing = .subscription
     ) throws -> (AgentSession, UUID) {
         let sessionID = UUID()
         let runDirectory = try ApprovalBroker.defaultRunDirectory()
@@ -1328,10 +1317,6 @@ final class AppModel: Identifiable {
             isolation: isolation,
             billing: billing,
             resume: resume)
-
-        // An empty tool set is the whole point of a scratch chat, and it is spelled `--tools ""` —
-        // a bare `--tools` would swallow the flag after it (Finding 5).
-        if isChatOnly { configuration.tools = [] }
 
         if !mcp.servers.isEmpty {
             let mcpURL = support.appendingPathComponent("mcp-\(sessionID.uuidString).json")
