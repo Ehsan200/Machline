@@ -332,6 +332,32 @@ struct PushTargetTests {
         #expect(byName["accepts"] == .pushed(isNew: true))
     }
 
+    /// With nothing to set upstream, every push runs at once — and the answers still come back
+    /// beside the remote they belong to rather than in whatever order the network settled.
+    @Test("Remotes pushed concurrently report in the order they were given")
+    func pushesWithoutAPrimaryKeepTheirOrder() throws {
+        let repository = try GitTestRepository()
+        try repository.write("hello", to: "file.txt")
+        try repository.commit("initial")
+
+        let names = ["one", "two", "three"]
+        let bares = try names.map { try Self.bareRemote(named: $0) }
+        defer { for bare in bares { try? FileManager.default.removeItem(at: bare) } }
+        for (name, bare) in zip(names, bares) {
+            try repository.manager.runner.check(["remote", "add", name, bare.path])
+        }
+
+        let results = repository.manager.push(
+            branch: "main", to: try repository.manager.remotes(), setUpstreamOn: nil)
+
+        #expect(results.map(\.remote) == names)
+        #expect(results.allSatisfy { $0.outcome == .pushed(isNew: true) })
+
+        // Nothing was named, so nothing claimed the branch's single upstream.
+        let upstream = try repository.manager.runner.run(["rev-parse", "main@{upstream}"])
+        #expect(upstream.succeeded == false)
+    }
+
     /// The counts the panel shows are per remote, which is the whole reason a fork needs the panel:
     /// three ahead of your own remote and forty behind the one you forked.
     @Test("Divergence is measured against each remote separately")

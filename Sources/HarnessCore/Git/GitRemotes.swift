@@ -202,39 +202,88 @@ extension GitManager {
 
     // MARK: - Push
 
-    /// Publishes one branch to each of these remotes, in order.
+    /// Publishes one branch to each of these remotes, concurrently.
     ///
     /// Does not throw and does not stop early. The remotes are independent: a branch rejected by
     /// one as non-fast-forward says nothing about the next, and abandoning the run there would
     /// leave the operator both half-published and short of the information to finish. Every remote
-    /// gets its own line in the answer.
+    /// gets its own line in the answer, in the order the remotes were given.
+    ///
+    /// Concurrent because these are network round trips with nothing to share: run in turn, a
+    /// mirror on a slow host makes the operator wait for it before the fast one is even attempted,
+    /// and the panel sits on a spinner for the sum rather than the slowest. Each `git push` is its
+    /// own process touching its own `refs/remotes/<name>/…`, so there is no lock they contend for.
     ///
     /// `setUpstreamOn` may name at most one of them. A branch has a single upstream, so passing
     /// `--set-upstream` to each in turn would let the last remote quietly redefine what the panel's
-    /// ahead and behind counts are measured against.
+    /// ahead and behind counts are measured against. That one push runs alone and first: it is the
+    /// only one that writes `.git/config`, and a push racing that write can fail on the config lock
+    /// having had nothing to say about the branch at all.
     public func push(
         branch: String, to remotes: [GitRemote], setUpstreamOn primary: String?
     ) -> [PushResult] {
-        remotes.map { remote in
-            // An explicit refspec rather than the bare branch name: `push.default` is per
-            // repository, not per remote, and the operator asked for this branch by name.
-            var arguments = ["push", "--porcelain"]
-            if remote.name == primary { arguments.append("--set-upstream") }
-            arguments += [remote.name, "refs/heads/\(branch):refs/heads/\(branch)"]
-
-            guard let output = try? runner.run(arguments) else {
-                return PushResult(
-                    remote: remote.name, url: remote.pushURL,
-                    outcome: .failed("Could not run git."))
-            }
-            return PushResult(
-                remote: remote.name,
-                url: remote.pushURL,
-                outcome: Self.outcome(
-                    porcelain: output.text,
-                    standardError: output.standardError,
-                    exitCode: output.exitCode))
+        let leader = remotes.firstIndex { $0.name == primary }
+        let results = PushResults(count: remotes.count)
+        if let leader {
+            results.record(push(branch: branch, to: remotes[leader], setsUpstream: true), at: leader)
         }
+
+        let rest = remotes.indices.filter { $0 != leader }
+        DispatchQueue.concurrentPerform(iterations: rest.count) { position in
+            let index = rest[position]
+            results.record(push(branch: branch, to: remotes[index], setsUpstream: false), at: index)
+        }
+
+        return results.ordered
+    }
+
+    /// One slot per remote, filled by whichever thread finishes that push.
+    ///
+    /// A lock rather than distinct indices alone: concurrent writes into one `Array` are a data
+    /// race whichever elements they land on, since the buffer itself is shared mutable state.
+    private final class PushResults: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [PushResult?]
+
+        init(count: Int) {
+            values = Array(repeating: nil, count: count)
+        }
+
+        func record(_ result: PushResult, at index: Int) {
+            lock.lock()
+            values[index] = result
+            lock.unlock()
+        }
+
+        /// The results that arrived, in the order the remotes were given.
+        var ordered: [PushResult] {
+            lock.lock()
+            defer { lock.unlock() }
+            return values.compactMap { $0 }
+        }
+    }
+
+    private func push(
+        branch: String, to remote: GitRemote, setsUpstream: Bool
+    ) -> PushResult {
+        // An explicit refspec rather than the bare branch name: `push.default` is per repository,
+        // not per remote, and the operator asked for this branch by name.
+        var arguments = ["push", "--porcelain"]
+        if setsUpstream { arguments.append("--set-upstream") }
+        arguments += [remote.name, "refs/heads/\(branch):refs/heads/\(branch)"]
+
+        guard let output = try? runner.run(arguments) else {
+            return PushResult(
+                remote: remote.name, url: remote.pushURL,
+                outcome: .failed("Could not run git."))
+        }
+        return PushResult(
+            remote: remote.name,
+            url: remote.pushURL,
+            outcome: Self.outcome(
+                porcelain: output.text,
+                standardError: output.standardError,
+                exitCode: output.exitCode))
     }
 
     /// Reads `git push --porcelain` output.
