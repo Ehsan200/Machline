@@ -484,7 +484,12 @@ struct TimelineView: View {
                 // Only follow the conversation for someone who is already at the end of it.
                 // Otherwise count what has arrived and let the pill offer the trip.
                 if isFollowing {
-                    scrollToBottom(proxy, animated: hasSettled)
+                    // Not animated while the agent is working. Entries land faster than a 0.22s
+                    // curve can run, and each new one re-aims the curve from wherever it had got
+                    // to — the scroll never reaches a foot that has already moved again. The
+                    // animation is for a settled conversation, where it reads as a single glide.
+                    let isWorking = agent?.state.isBusy ?? false
+                    scrollToBottom(proxy, animated: hasSettled && !isWorking)
                 } else {
                     unseenCount += 1
                 }

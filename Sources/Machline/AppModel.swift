@@ -757,8 +757,9 @@ final class AppModel: Identifiable {
     /// into a single follow-up pass instead of queueing a task per frame.
     @ObservationIgnored private var graphRefreshInFlight = false
     @ObservationIgnored private var graphRefreshPending = false
-    /// Whether the coalesced work includes something structural, which also costs a `git status`.
-    @ObservationIgnored private var graphRefreshNeedsGit = false
+    /// Whether the coalesced work includes something structural — a transcript that may have
+    /// changed, which bumps the revision and costs a `git status`. A streaming-only pass is not.
+    @ObservationIgnored private var graphRefreshIsStructural = false
 
     // The memos below are filled from view bodies. `@Observable` treats a plain stored property as
     // observable state, so writing one mid-body is a change made during a view update: SwiftUI
@@ -1385,7 +1386,7 @@ final class AppModel: Identifiable {
                 streamingDirty = false
             }
 
-            requestGraphRefresh(includingGit: !isStreamingOnly)
+            requestGraphRefresh(structural: !isStreamingOnly)
 
         case .approvalPending(let pending):
             pendingApprovals.append(pending)
@@ -1438,14 +1439,19 @@ final class AppModel: Identifiable {
             guard !Task.isCancelled, self.streamingDirty else { return }
             self.streamingDirty = false
             self.lastStreamingRefresh = Date()
-            self.requestGraphRefresh(includingGit: false)
+            self.requestGraphRefresh(structural: false)
         }
     }
 
     /// Asks for the session's snapshot to be republished, coalescing with any refresh already
     /// running rather than racing it. See `graphRefreshInFlight`.
-    private func requestGraphRefresh(includingGit: Bool) {
-        graphRefreshNeedsGit = graphRefreshNeedsGit || includingGit
+    ///
+    /// `structural` says the transcript itself may have moved — an entry landed, a reply was
+    /// assembled, a tool returned. A streaming-only pass is not structural: it lengthens the text
+    /// being typed, which the timeline reads straight off the node. Sticky across a coalesce, so a
+    /// structural change folded in behind a streaming one is not demoted to one.
+    private func requestGraphRefresh(structural: Bool) {
+        graphRefreshIsStructural = graphRefreshIsStructural || structural
         guard !graphRefreshInFlight else {
             graphRefreshPending = true
             return
@@ -1465,11 +1471,17 @@ final class AppModel: Identifiable {
     private func refreshGraph() async {
         guard let session else { return }
         let snapshot = await session.graph
-        let wantsGit = graphRefreshNeedsGit
-        graphRefreshNeedsGit = false
+        let isStructural = graphRefreshIsStructural
+        graphRefreshIsStructural = false
 
         graph = snapshot
-        transcriptRevision &+= 1
+        // Only a structural pass can have moved a transcript, so only one may bump the revision.
+        // Bumping on every streaming frame threw the timeline memo away a dozen times a second —
+        // an O(transcript) refold per frame — and drove the timeline's revision handler, whose
+        // scroll is animated: a 0.22s curve restarted every 0.08s, re-aimed each time at a foot
+        // that had already moved. The reply outran its own auto-scroll. The live text still
+        // follows, off the streaming length, and that path was never animated.
+        if isStructural { transcriptRevision &+= 1 }
         recordActivity(in: snapshot)
         recordBusyState(in: snapshot)
         // The CLI's real id only arrives with the handshake, and a forked resume mints one we did
@@ -1495,7 +1507,7 @@ final class AppModel: Identifiable {
         // `turnCompleted` meant the Changes list and the Git workbench sat stale for minutes while
         // files moved underneath them. `refresh()` coalesces, so a burst of edits still costs one
         // `git status`.
-        if wantsGit { git?.refresh() }
+        if isStructural { git?.refresh() }
     }
 
     // MARK: - Actions
