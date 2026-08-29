@@ -600,6 +600,47 @@ final class GitPanelModel {
         perform { try $0.unstage(paths: [path]) }
     }
 
+    /// Undoes files whole: staged and unstaged changes both, which is what "undo this file" means to
+    /// the operator reading the Changes list. Hunk-level `discard` only reaches the unstaged half.
+    ///
+    /// A file Git has never seen has no committed version to restore, so undoing it removes it — to
+    /// the Trash rather than outright, because Git holds no copy to recover it from and a mis-click
+    /// would otherwise be final.
+    ///
+    /// Destructive. Callers confirm first.
+    func revertFiles(_ paths: [String]) {
+        let plan = GitRevertPlan(paths: paths, status: status)
+        guard !plan.isEmpty else { return }
+        let root = activeRepository
+        perform { manager in
+            // Index first: `git rm --cached` on a path already restored would report it as missing.
+            try manager.forget(paths: plan.forgotten)
+            try manager.revert(paths: plan.restored)
+            try Self.trash(plan.removed, in: root)
+        }
+        checkedPaths.subtract(paths)
+        if let selectedPath, paths.contains(selectedPath) { self.selectedPath = nil }
+    }
+
+    func revertFile(_ path: String) {
+        revertFiles([path])
+    }
+
+    /// Undoes every ticked file on the side being shown, in one Git call and one refresh.
+    func revertChecked() {
+        revertFiles(checkedPathsOnCurrentSide())
+    }
+
+    /// Skips what has already gone: a file staged as new and then deleted from disk is a normal
+    /// state, not a failure to undo.
+    nonisolated private static func trash(_ paths: [String], in root: URL) throws {
+        for path in paths {
+            let url = root.appendingPathComponent(path)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        }
+    }
+
     // MARK: Bulk selection
 
     func toggleChecked(_ path: String) {

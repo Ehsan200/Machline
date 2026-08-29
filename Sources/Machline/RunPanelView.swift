@@ -377,6 +377,9 @@ struct CompletedAgentsList: View {
 /// Session-wide net file changes. Clicking a row opens the whole file diff.
 struct ChangesSection: View {
     @Bindable var model: AppModel
+    /// The path waiting on a yes. Undoing a file cannot be taken back, so it is never the click that
+    /// does it.
+    @State private var confirmingRevert: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -397,13 +400,44 @@ struct ChangesSection: View {
                             status: model.changeStatus(for: diff.displayPath),
                             onOpen: { model.openDiffModal(path: diff.displayPath) },
                             onView: { model.openViewer(path: diff.displayPath) },
-                            onReveal: { model.revealInFinder(path: diff.displayPath) })
+                            onReveal: { model.revealInFinder(path: diff.displayPath) },
+                            onRevert: { confirmingRevert = diff.displayPath })
                     }
                 }
             }
         }
         .padding(.horizontal, Theme.Space.railPadding)
         .padding(.vertical, Theme.Space.md)
+        .alert(
+            removesFile ? "Move this file to the Trash?" : "Undo the changes to this file?",
+            isPresented: Binding(
+                get: { confirmingRevert != nil },
+                set: { if !$0 { confirmingRevert = nil } })
+        ) {
+            Button(removesFile ? "Move to Trash" : "Undo", role: .destructive) {
+                if let path = confirmingRevert { model.revertChanges(path: path) }
+                confirmingRevert = nil
+            }
+            Button("Cancel", role: .cancel) { confirmingRevert = nil }
+        } message: {
+            Text(revertWarning)
+        }
+    }
+
+    /// A file the last commit never had cannot be restored from it, so undoing it is a deletion —
+    /// and the Trash is the only copy left afterwards.
+    private var removesFile: Bool {
+        guard let confirmingRevert else { return false }
+        return model.revertRemovesFile(path: confirmingRevert)
+    }
+
+    private var revertWarning: String {
+        guard let confirmingRevert else { return "" }
+        return removesFile
+            ? "\(confirmingRevert) is not in the last commit, so there is nothing to restore it "
+                + "to. It goes to the Trash."
+            : "\(confirmingRevert) goes back to the last commit. Everything since, staged or not, "
+                + "is thrown away and cannot be recovered."
     }
 
     private var changedFiles: [GitFileDiff] { model.sessionChanges }
@@ -417,6 +451,7 @@ struct ChangedFileRow: View {
     let onOpen: () -> Void
     let onView: () -> Void
     let onReveal: () -> Void
+    let onRevert: () -> Void
 
     @State private var isHovering = false
 
@@ -469,6 +504,12 @@ struct ChangedFileRow: View {
             Button("Show diff") { onOpen() }
             Divider()
             Button("Show in Finder") { onReveal() }
+            Divider()
+            // A new file has no committed version to go back to, so undoing it is a removal, and
+            // the menu says so rather than hiding it behind the same word.
+            Button(status == "A" ? "Move file to Trash…" : "Undo changes…", role: .destructive) {
+                onRevert()
+            }
         }
     }
 

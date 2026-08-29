@@ -1974,6 +1974,19 @@ extension AppModel {
         return standardized
     }
 
+    /// Undoes a file wholesale: the Changes list's counterpart to the workbench's hunk-level
+    /// discard, since the list is where a file is looked at as one thing. Destructive — the row
+    /// confirms before calling this.
+    func revertChanges(path: String) {
+        git?.revertFile(repositoryRelativePath(path))
+    }
+
+    /// True when undoing a path removes the file rather than restoring it, because nothing committed
+    /// exists to restore. The confirmation has to say which of the two it is about to do.
+    func revertRemovesFile(path: String) -> Bool {
+        changeStatus(for: path) == "A"
+    }
+
     /// The porcelain status letter for a path, so a rename or delete reads correctly rather than
     /// being inferred from the diff.
     func changeStatus(for path: String) -> String {

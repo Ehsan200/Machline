@@ -148,6 +148,26 @@ public struct GitManager: Sendable {
         try runner.check(["restore", "--worktree", "--"] + paths)
     }
 
+    /// Puts paths back to what HEAD holds, in the index and the working tree both.
+    ///
+    /// Wider than `discard(paths:)`, which restores from the *index* and so leaves a staged change
+    /// standing: undoing a file means the file, not the half of it Git has not been told about yet.
+    /// A path HEAD has never seen is *deleted* by this, which is why callers route new files through
+    /// `GitRevertPlan` instead. Destructive and irreversible — always confirm first.
+    public func revert(paths: [String]) throws {
+        guard !paths.isEmpty else { return }
+        try runner.check(["restore", "--source=HEAD", "--staged", "--worktree", "--"] + paths)
+    }
+
+    /// Drops paths from the index, leaving the files on disk untracked.
+    ///
+    /// The only way to unstage a file staged as new when HEAD holds no version of it — and the only
+    /// one at all before the first commit, where `git restore --staged` cannot resolve HEAD.
+    public func forget(paths: [String]) throws {
+        guard !paths.isEmpty else { return }
+        try runner.check(["rm", "--cached", "--force", "--quiet", "--"] + paths)
+    }
+
     /// Marks an untracked file as intended for addition so it appears in `git diff` and becomes
     /// hunk-stageable, matching how `git add -p` handles new files.
     public func markIntentToAdd(paths: [String]) throws {

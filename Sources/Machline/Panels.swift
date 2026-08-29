@@ -13,6 +13,9 @@ struct GitWorkbenchView: View {
     /// Only for choosing which conversation a draft forks — see `WindowModel.commitDraftFork(for:)`.
     @Bindable var window: WindowModel
     @State private var confirmingDiscard: (GitHunk, GitFileDiff)?
+    /// Whole files waiting on a yes, which is a wider throw-away than a hunk: it takes the staged
+    /// side with it, and for a new file it takes the file.
+    @State private var confirmingRevert: [String]?
     @FocusState private var isFileListFocused: Bool
 
     var body: some View {
@@ -107,6 +110,49 @@ struct GitWorkbenchView: View {
         } message: {
             Text("This throws the change away. It cannot be undone.")
         }
+        .alert(
+            revertTitle,
+            isPresented: Binding(
+                get: { confirmingRevert != nil },
+                set: { if !$0 { confirmingRevert = nil } })
+        ) {
+            Button(revertPlan?.deletesFiles == true ? "Move to Trash" : "Undo", role: .destructive) {
+                if let paths = confirmingRevert { git.revertFiles(paths) }
+                confirmingRevert = nil
+            }
+            Button("Cancel", role: .cancel) { confirmingRevert = nil }
+        } message: {
+            Text(revertMessage)
+        }
+    }
+
+    /// The plan for what is waiting on confirmation, so the wording describes what will actually
+    /// happen rather than the average case.
+    private var revertPlan: GitRevertPlan? {
+        confirmingRevert.map { GitRevertPlan(paths: $0, status: git.status) }
+    }
+
+    private var revertTitle: String {
+        guard let paths = confirmingRevert, let plan = revertPlan else { return "" }
+        if paths.count > 1 { return "Undo \(paths.count) files?" }
+        return plan.deletesFiles ? "Move this file to the Trash?" : "Undo the changes to this file?"
+    }
+
+    private var revertMessage: String {
+        guard let plan = revertPlan else { return "" }
+        var parts: [String] = []
+        if !plan.restored.isEmpty {
+            parts.append(
+                "\(plan.restored.count == 1 ? "One file goes" : "\(plan.restored.count) files go") "
+                    + "back to the last commit. Everything since, staged or not, is thrown away.")
+        }
+        if !plan.removed.isEmpty {
+            parts.append(
+                "\(plan.removed.count == 1 ? "One file is" : "\(plan.removed.count) files are") "
+                    + "not in the last commit, so \(plan.removed.count == 1 ? "it goes" : "they go")"
+                    + " to the Trash.")
+        }
+        return parts.joined(separator: " ")
     }
 
     /// Branch, divergence, and the three remote actions.
@@ -311,6 +357,17 @@ struct GitWorkbenchView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Show diff") { model.openDiffModal(path: diff.displayPath) }
+                        Button("Edit file") { model.openViewer(path: diff.displayPath) }
+                        Divider()
+                        Button(
+                            isNew(diff.displayPath) ? "Move file to Trash…" : "Undo changes…",
+                            role: .destructive
+                        ) {
+                            confirmingRevert = [diff.displayPath]
+                        }
+                    }
                 }
             }
         }
@@ -381,9 +438,18 @@ struct GitWorkbenchView: View {
                     : "Stage \(checked.count)") {
                     git.showStagedSide ? git.unstageChecked() : git.stageChecked()
                 }
+                QuietButton(title: "Undo \(checked.count)", role: .danger) {
+                    confirmingRevert = checked
+                }
             }
         }
         .padding(.bottom, 2)
+    }
+
+    /// A file the last commit does not have. Undoing it removes it rather than restoring it.
+    private func isNew(_ path: String) -> Bool {
+        guard let file = git.status?.files.first(where: { $0.path == path }) else { return false }
+        return file.isUntracked || file.indexChange == .added
     }
 
     @ViewBuilder
@@ -631,6 +697,9 @@ struct FileDiffModal: View {
     /// attributed string of a 400k-line patch is not something to build during a sheet animation.
     private static let initialLineLimit = 4_000
     @State private var showsEverything = false
+    /// Set while the undo waits on a yes. Local to the sheet: an alert raised by the view behind it
+    /// would never be seen.
+    @State private var confirmingRevert = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -670,7 +739,26 @@ struct FileDiffModal: View {
         .frame(width: 900, height: 640)
         .background(Theme.Colors.canvas)
         .onExitCommand { dismiss() }
+        .alert(
+            removesFile ? "Move this file to the Trash?" : "Undo the changes to this file?",
+            isPresented: $confirmingRevert
+        ) {
+            Button(removesFile ? "Move to Trash" : "Undo", role: .destructive) {
+                model.revertChanges(path: path)
+                // Nothing is left to read once the diff has been undone.
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) { confirmingRevert = false }
+        } message: {
+            Text(removesFile
+                ? "This file is not in the last commit, so there is nothing to restore it to. "
+                    + "It goes to the Trash."
+                : "The file goes back to the last commit. Everything since, staged or not, is "
+                    + "thrown away and cannot be recovered.")
+        }
     }
+
+    private var removesFile: Bool { model.revertRemovesFile(path: path) }
 
     /// The diff as one attributed string: hunk headers muted, additions and deletions tinted, and
     /// every line prefixed by its marker so a copied selection is still a valid patch fragment.
@@ -735,6 +823,14 @@ struct FileDiffModal: View {
             }
             QuietButton(title: "Open externally") { model.openFile(path: path) }
             QuietButton(title: "Show in Finder") { model.revealInFinder(path: path) }
+            // The place the whole change is on screen is the place it can be turned down whole.
+            if model.diff(for: path) != nil {
+                QuietButton(
+                    title: removesFile ? "Move to Trash" : "Undo changes", role: .danger
+                ) {
+                    confirmingRevert = true
+                }
+            }
             IconButton(systemName: "xmark", help: "Close (esc)") { dismiss() }
         }
         .padding(.horizontal, Theme.Space.lg)
