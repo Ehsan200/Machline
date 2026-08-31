@@ -199,7 +199,7 @@ public struct UpdateInstaller: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = [
-            "-c", "nohup /bin/bash \(shellQuoted(script.path)) >/dev/null 2>&1 &",
+            "-c", "nohup /bin/bash \(script.path.shellQuoted) >/dev/null 2>&1 &",
         ]
         try process.run()
         process.waitUntilExit()
@@ -217,10 +217,10 @@ public struct UpdateInstaller: Sendable {
         set -uo pipefail
 
         PID=\(pid)
-        SRC=\(shellQuoted(source.path))
-        DST=\(shellQuoted(destination.path))
-        DEVICE=\(shellQuoted(device))
-        SCRATCH=\(shellQuoted(scratch.path))
+        SRC=\(source.path.shellQuoted)
+        DST=\(destination.path.shellQuoted)
+        DEVICE=\(device.shellQuoted)
+        SCRATCH=\(scratch.path.shellQuoted)
 
         # Wait up to ~30s for the app to quit. Replacing a bundle out from under a running process
         # is what leaves it half-updated, so this gives up rather than forcing it.
@@ -260,12 +260,6 @@ public struct UpdateInstaller: Sendable {
         cleanup
         /usr/bin/open "$DST" >/dev/null 2>&1
         """
-    }
-
-    /// Single-quoted for the shell, with embedded quotes broken out — paths come from the filesystem
-    /// and from a downloaded image's volume name, so neither is trusted to be tame.
-    static func shellQuoted(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     @discardableResult

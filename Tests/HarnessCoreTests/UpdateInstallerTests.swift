@@ -87,8 +87,8 @@ struct UpdateInstallerTests {
     /// the app. Neither is trusted to be free of quotes or spaces.
     @Test("Paths reach the script quoted")
     func quoting() {
-        #expect(UpdateInstaller.shellQuoted("/Volumes/Machline 1.2") == "'/Volumes/Machline 1.2'")
-        #expect(UpdateInstaller.shellQuoted("it's") == "'it'\\''s'")
+        #expect("/Volumes/Machline 1.2".shellQuoted == "'/Volumes/Machline 1.2'")
+        #expect("it's".shellQuoted == "'it'\\''s'")
     }
 
     @Test("The script waits, swaps non-destructively, and reopens the app")

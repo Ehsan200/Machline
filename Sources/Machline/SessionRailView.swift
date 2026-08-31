@@ -615,6 +615,8 @@ struct SessionRow: View {
         .help(session.id)
         .contextMenu {
             Button("Resume") { onOpen() }
+            // For resuming outside the app: the whole line, ready to paste into a terminal.
+            Button("Copy Resume Command") { NSPasteboard.copy(session.resumeCommand) }
             Button("Rename…") { onRename() }
             Divider()
             Button("Archive") { onArchive() }

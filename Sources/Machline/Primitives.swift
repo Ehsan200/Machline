@@ -111,6 +111,14 @@ extension View {
     }
 }
 
+extension NSPasteboard {
+    /// Replaces the clipboard with `text`. One place, so every "Copy …" item behaves the same.
+    static func copy(_ text: String) {
+        general.clearContents()
+        general.setString(text, forType: .string)
+    }
+}
+
 extension NSEvent {
     /// Whether ⌘ is held at this instant.
     ///

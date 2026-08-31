@@ -320,4 +320,16 @@ struct ReplayTests {
         #expect(entries.count == 1)
         #expect(entries[0].kind == .assistant("kept"))
     }
+
+    /// A directory named by the operator can carry spaces and quotes, and the command is pasted
+    /// into a shell verbatim.
+    @Test("The resume command carries the directory and the id, quoted")
+    func resumeCommandQuotes() {
+        let session = HistoricalSession(
+            id: "1f2e", fileURL: URL(fileURLWithPath: "/tmp/1f2e.jsonl"),
+            cwd: "/Users/x/it's mine", firstPrompt: nil, startedAt: nil,
+            lastActivityAt: Date(), gitBranch: nil, cliVersion: nil, model: nil, byteCount: 0)
+
+        #expect(session.resumeCommand == "cd '/Users/x/it'\\''s mine' && claude --resume '1f2e'")
+    }
 }

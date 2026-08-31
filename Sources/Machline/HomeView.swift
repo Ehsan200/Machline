@@ -363,7 +363,8 @@ struct HomeView: View {
                     HomeSessionRow(
                         title: model.title(for: session),
                         age: session.lastActivityAt.relativeLabel,
-                        branch: session.gitBranch
+                        branch: session.gitBranch,
+                        resumeCommand: session.resumeCommand
                     ) {
                         model.openFromHome(workspace: workspace, session: session)
                     }
@@ -465,6 +466,8 @@ private struct HomeSessionRow: View {
     let title: String
     let age: String
     let branch: String?
+    /// The terminal line that resumes this conversation, for the context menu's copy item.
+    let resumeCommand: String
     let onOpen: () -> Void
 
     @State private var isHovering = false
@@ -495,5 +498,10 @@ private struct HomeSessionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .contextMenu {
+            Button("Resume") { onOpen() }
+            // For resuming outside the app: the whole line, ready to paste into a terminal.
+            Button("Copy Resume Command") { NSPasteboard.copy(resumeCommand) }
+        }
     }
 }

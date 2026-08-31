@@ -71,6 +71,15 @@ public struct HistoricalSession: Sendable, Hashable, Identifiable, Codable {
             byteCount: byteCount)
     }
 
+    /// The shell line that resumes this conversation in a terminal.
+    ///
+    /// The `cd` is part of the command rather than a step left to the operator: the CLI resolves a
+    /// session id against the directory it is run from, so `--resume` on its own finds nothing from
+    /// anywhere else.
+    public var resumeCommand: String {
+        "cd \(cwd.shellQuoted) && claude --resume \(id.shellQuoted)"
+    }
+
     /// A one-line title. Falls back to the session id, never to a fabricated summary.
     public var title: String {
         guard let firstPrompt, !firstPrompt.isEmpty else { return "Session \(id.prefix(8))" }
