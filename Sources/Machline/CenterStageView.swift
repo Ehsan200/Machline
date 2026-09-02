@@ -175,9 +175,8 @@ struct CenterStageView: View {
                     TerminalPane(
                         workingDirectory: workspace,
                         shell: model.terminalShell,
-                        generation: Binding(
-                            get: { model.terminalGeneration },
-                            set: { _ in }))
+                        generation: model.terminalGeneration,
+                        onRestart: { model.restartTerminal() })
                         .opacity(model.isTerminalVisible ? 1 : 0)
                         .allowsHitTesting(model.isTerminalVisible)
                 }

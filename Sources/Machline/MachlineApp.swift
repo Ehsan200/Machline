@@ -113,6 +113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Waits for a window to exist before it asks anything — see `UpdateScheduler.checkIfDue`.
         UpdateScheduler.shared.start()
+
+        // Works out the account's login shell before anything on screen needs it. Resolving it
+        // reads the directory service, which means a subprocess and a `waitUntilExit` that spins a
+        // runloop — and the shell pane asks for it while SwiftUI is building the terminal view.
+        // Answering from a warm cache there is what keeps that off the main thread. See
+        // `LoginShell`.
+        Task.detached(priority: .utility) { LoginShell.prewarm() }
     }
 
     /// Quitting closes every window. Freezing the record first is what keeps ⌘Q from reading as
