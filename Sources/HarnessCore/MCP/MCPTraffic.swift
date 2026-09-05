@@ -92,6 +92,8 @@ public actor MCPInspector {
     public private(set) var isRunning = false
 
     private var pending: [String: MCPExchange] = [:]
+    /// Responses seen before their request, newest last. See `ingest`.
+    private var unmatchedResponses: [(key: String, record: MCPTrafficRecord)] = []
     private var listener: UnixSocket.Listener?
     private var continuation: AsyncStream<MCPTrafficEvent>.Continuation?
     private let historyLimit: Int
@@ -117,15 +119,29 @@ public actor MCPInspector {
                     continue
                 }
                 // One long-lived connection per proxied server.
-                Thread.detachNewThread { [weak self] in
-                    defer { Darwin.close(descriptor) }
+                //
+                // The lines go through a stream rather than a `Task` per line: unstructured tasks
+                // reach the actor in whatever order the scheduler picks, so a response could be
+                // ingested before its own request and never pair up.
+                let (lines, linesContinuation) = AsyncStream<String>.makeStream(
+                    bufferingPolicy: .unbounded)
+                Task { [weak self] in
+                    for await line in lines {
+                        guard let self else { break }
+                        await self.ingest(line: line)
+                    }
+                }
+                Thread.detachNewThread {
+                    defer {
+                        Darwin.close(descriptor)
+                        linesContinuation.finish()
+                    }
                     while true {
                         guard let line = try? UnixSocket.readLine(
                             descriptor: descriptor,
                             deadline: Date().addingTimeInterval(86_400))
                         else { return }
-                        guard let self else { return }
-                        Task { await self.ingest(line: line) }
+                        linesContinuation.yield(line)
                     }
                 }
             }
@@ -146,6 +162,7 @@ public actor MCPInspector {
     public func clearHistory() {
         exchanges.removeAll()
         pending.removeAll()
+        unmatchedResponses.removeAll()
     }
 
     private func ingest(line: String) {
@@ -161,22 +178,48 @@ public actor MCPInspector {
         switch record.direction {
         case .toServer:
             guard let method = record.method else { return }
-            let exchange = MCPExchange(
+            var exchange = MCPExchange(
                 serverName: record.serverName, requestID: requestID, method: method,
                 request: record.payload, response: nil, sentAt: record.timestamp,
                 respondedAt: nil)
-            pending[key] = exchange
             continuation?.yield(.exchangeStarted(exchange))
+            // The proxy tees each direction from its own reader, so a fast server's response can
+            // reach us first. Pair with it rather than dropping the exchange on the floor.
+            if let index = unmatchedResponses.firstIndex(where: { $0.key == key }) {
+                let response = unmatchedResponses.remove(at: index).record
+                complete(&exchange, with: response)
+            } else {
+                pending[key] = exchange
+            }
 
         case .toClient:
-            guard var exchange = pending.removeValue(forKey: key) else { return }
-            exchange.response = record.payload
-            exchange.respondedAt = record.timestamp
-            exchanges.append(exchange)
-            if exchanges.count > historyLimit {
-                exchanges.removeFirst(exchanges.count - historyLimit)
+            guard var exchange = pending.removeValue(forKey: key) else {
+                rememberUnmatched(record, key: key)
+                return
             }
-            continuation?.yield(.exchangeCompleted(exchange))
+            complete(&exchange, with: record)
+        }
+    }
+
+    private func complete(_ exchange: inout MCPExchange, with response: MCPTrafficRecord) {
+        exchange.response = response.payload
+        exchange.respondedAt = response.timestamp
+        exchanges.append(exchange)
+        if exchanges.count > historyLimit {
+            exchanges.removeFirst(exchanges.count - historyLimit)
+        }
+        continuation?.yield(.exchangeCompleted(exchange))
+    }
+
+    /// Holds a response whose request has not arrived yet.
+    ///
+    /// Bounded, and deliberately small: an unmatched response is either about to be paired within
+    /// microseconds, or belongs to a request made before the inspector was listening and never
+    /// will be. Neither case is worth remembering for long.
+    private func rememberUnmatched(_ record: MCPTrafficRecord, key: String) {
+        unmatchedResponses.append((key: key, record: record))
+        if unmatchedResponses.count > 64 {
+            unmatchedResponses.removeFirst(unmatchedResponses.count - 64)
         }
     }
 }

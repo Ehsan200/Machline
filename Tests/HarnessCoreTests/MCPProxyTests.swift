@@ -127,7 +127,9 @@ struct MCPProxyTests {
         _ = try server.receive()
         server.finish()
 
-        try await collected.waitForMethods(["initialize", "tools/call"], timeout: 60)
+        // Well inside the test's own time limit: a wait as long as the limit turns a real failure
+        // into "time limit exceeded", which says nothing about what went wrong.
+        try await collected.waitForMethods(["initialize", "tools/call"], timeout: 20)
         let exchanges = collected.values
 
         let initialize = try #require(exchanges.first { $0.method == "initialize" })
