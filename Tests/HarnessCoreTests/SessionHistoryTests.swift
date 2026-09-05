@@ -265,7 +265,8 @@ struct ReplayTests {
         #expect(entries[0].kind == .user("build it"))
         #expect(entries[1].kind == .assistant("on it"))
         #expect(entries[2].kind == .toolCall(name: "Bash", detail: "swift build"))
-        #expect(entries[3].kind == .toolResult(text: "Compiling", isError: false))
+        #expect(entries[3].kind
+            == .toolResult(text: "Compiling", excerpt: OutputExcerpt("Compiling"), isError: false))
     }
 
     /// A subagent's conversation is not this one's.

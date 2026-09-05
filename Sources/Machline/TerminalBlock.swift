@@ -8,8 +8,11 @@ import SwiftUI
 /// command's own alignment is usually load-bearing, and a wrapped column of output is unreadable.
 struct TerminalBlock: View {
     let command: String?
-    let stdout: String
-    let stderr: String
+    /// Excerpts, not the whole output: this pane is a fixed height whatever it is given, so drawing
+    /// the full text only buys a TextKit layout of every line — in the frame the lazy stack builds
+    /// this row, which is a stall mid-scroll. See `OutputExcerpt`.
+    let stdout: OutputExcerpt
+    let stderr: OutputExcerpt
     var exitLabel: String?
     var isError: Bool = false
     var maxHeight: CGFloat = Theme.Layout.toolOutputMaxHeight
@@ -27,16 +30,17 @@ struct TerminalBlock: View {
                 ScrollView([.vertical, .horizontal]) {
                     VStack(alignment: .leading, spacing: 0) {
                         if !stdout.isEmpty {
-                            stream(stdout, tint: Theme.Colors.muted)
+                            stream(stdout.text, tint: Theme.Colors.muted)
                         }
                         if !stderr.isEmpty {
-                            stream(stderr, tint: Theme.Colors.error)
+                            stream(stderr.text, tint: Theme.Colors.error)
                         }
                     }
                     .padding(.horizontal, Theme.Space.md)
                     .padding(.vertical, Theme.Space.sm)
                 }
                 .frame(maxHeight: maxHeight)
+                truncationNote
             } else if command == nil {
                 Text("no output")
                     .font(Theme.Typography.monoSmall)
@@ -65,6 +69,20 @@ struct TerminalBlock: View {
     }
 
     private var hasOutput: Bool { !stdout.isEmpty || !stderr.isEmpty }
+
+    /// Says so when the pane is not showing everything. One line, present or absent for the life of
+    /// the row — it never appears mid-scroll and shifts what is below it.
+    @ViewBuilder
+    private var truncationNote: some View {
+        if let note = stdout.summary ?? stderr.summary {
+            Hairline(color: Theme.Colors.border.opacity(0.6))
+            Text(note)
+                .font(Theme.Typography.monoMeta)
+                .foregroundStyle(Theme.Colors.subtle)
+                .padding(.horizontal, Theme.Space.md)
+                .padding(.vertical, 5)
+        }
+    }
 
     private func promptLine(_ command: String) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -129,8 +147,10 @@ struct ReplayEntryView: View {
         case .toolCall(let name, let detail):
             ReplayToolView(model: model, rowKey: .replay(entry.id), name: name, detail: detail)
 
-        case .toolResult(let text, let isError):
-            ReplayResultView(model: model, rowKey: .replay(entry.id), text: text, isError: isError)
+        case .toolResult(let text, let excerpt, let isError):
+            ReplayResultView(
+                model: model, rowKey: .replay(entry.id),
+                text: text, excerpt: excerpt, isError: isError)
         }
     }
 
@@ -185,7 +205,7 @@ struct ReplayToolView: View {
                 isExpanded: model.rowExpansionBinding(rowKey))
 
             if isExpanded {
-                TerminalBlock(command: detail, stdout: "", stderr: "")
+                TerminalBlock(command: detail, stdout: .empty, stderr: .empty)
                     .padding(.leading, Theme.Space.xl)
                     .padding(.trailing, Theme.Space.md)
                     .padding(.bottom, Theme.Space.sm)
@@ -202,7 +222,9 @@ struct ReplayToolView: View {
 struct ReplayResultView: View {
     @Bindable var model: AppModel
     let rowKey: AppModel.RowKey
+    /// The whole result, for quoting. Never drawn — that is what `excerpt` is for.
     let text: String
+    let excerpt: OutputExcerpt
     let isError: Bool
 
     private var isExpanded: Bool { model.isRowExpanded(rowKey, whenUnset: isError) }
@@ -211,7 +233,7 @@ struct ReplayResultView: View {
         VStack(alignment: .leading, spacing: 0) {
             ToolDisclosureRow(
                 name: isError ? "Blocked" : "Result",
-                detail: text.split(separator: "\n").first.map(String.init) ?? "",
+                detail: excerpt.firstLine,
                 statusIcon: isError ? "xmark.circle" : "checkmark",
                 statusTint: isError ? Theme.Colors.error : Theme.Colors.success,
                 isExpanded: model.rowExpansionBinding(rowKey, whenUnset: isError))
@@ -220,8 +242,8 @@ struct ReplayResultView: View {
                 QuoteOutputRow(model: model, text: text)
                 TerminalBlock(
                     command: nil,
-                    stdout: isError ? "" : text,
-                    stderr: isError ? text : "",
+                    stdout: isError ? .empty : excerpt,
+                    stderr: isError ? excerpt : .empty,
                     isError: isError)
                     .padding(.leading, Theme.Space.xl)
                     .padding(.trailing, Theme.Space.md)

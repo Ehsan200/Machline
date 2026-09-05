@@ -839,23 +839,15 @@ struct ToolResultRow: View {
                 QuoteOutputRow(model: model, text: quotableOutput)
                 ScrollView {
                     // stdout and stderr arrive pre-separated, so stderr can be styled distinctly
-                    // without parsing concatenated output.
+                    // without parsing concatenated output. Both are drawn from their excerpts: the
+                    // pane is this height whatever it is handed, so the rest of the text is layout
+                    // nobody sees, paid for in the frame this row is built. See `OutputExcerpt`.
                     VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                        if let output, !(output.stdout.isEmpty && output.stderr.isEmpty) {
-                            if !output.stdout.isEmpty {
-                                Text(output.stdout)
-                                    .font(Theme.Typography.monoSmall)
-                                    .foregroundStyle(Theme.Colors.muted)
-                            }
-                            if !output.stderr.isEmpty {
-                                Text(output.stderr)
-                                    .font(Theme.Typography.monoSmall)
-                                    .foregroundStyle(Theme.Colors.error)
-                            }
-                        } else {
-                            Text(result.text)
+                        ForEach(streams, id: \.0) { key, excerpt in
+                            Text(excerpt.text)
                                 .font(Theme.Typography.monoSmall)
-                                .foregroundStyle(Theme.Colors.muted)
+                                .foregroundStyle(
+                                    key == "stderr" ? Theme.Colors.error : Theme.Colors.muted)
                         }
                     }
                     .textSelection(.enabled)
@@ -865,6 +857,15 @@ struct ToolResultRow: View {
                 .padding(.horizontal, Theme.Space.md)
                 .padding(.leading, Theme.Space.md)
                 .padding(.bottom, Theme.Space.sm)
+
+                if let note = streams.compactMap({ $0.1.summary }).first {
+                    Text(note)
+                        .font(Theme.Typography.monoMeta)
+                        .foregroundStyle(Theme.Colors.subtle)
+                        .padding(.horizontal, Theme.Space.md)
+                        .padding(.leading, Theme.Space.md)
+                        .padding(.bottom, Theme.Space.sm)
+                }
             }
         }
         .overlay(alignment: .leading) {
@@ -874,9 +875,24 @@ struct ToolResultRow: View {
         }
     }
 
+    /// Whichever streams actually carried something, as their excerpts. `stderr` is keyed so it can
+    /// be tinted as the failure it is.
+    private var streams: [(String, OutputExcerpt)] {
+        guard let output, !(output.stdout.isEmpty && output.stderr.isEmpty) else {
+            return [("result", result.excerpt)]
+        }
+        return [("stdout", output.stdoutExcerpt), ("stderr", output.stderrExcerpt)]
+            .filter { !$0.1.isEmpty }
+    }
+
+    /// Precomputed on the decode queue, so the collapsed row — which the lazy stack builds as it
+    /// scrolls past — does no string work at all. Taking it here with `split(separator:)` walked
+    /// the whole output and allocated a substring per line, on every body pass.
     private var firstLine: String {
-        let source = output.map { $0.stdout.isEmpty ? $0.stderr : $0.stdout } ?? result.text
-        return source.split(separator: "\n").first.map(String.init) ?? ""
+        guard let output, !(output.stdout.isEmpty && output.stderr.isEmpty) else {
+            return result.excerpt.firstLine
+        }
+        return output.stdout.isEmpty ? output.stderrExcerpt.firstLine : output.stdoutExcerpt.firstLine
     }
 
     private var quotableOutput: String {

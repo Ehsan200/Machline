@@ -98,7 +98,9 @@ public struct ReplayEntry: Sendable, Hashable, Identifiable {
         case assistant(String)
         case thinking(String)
         case toolCall(name: String, detail: String)
-        case toolResult(text: String, isError: Bool)
+        /// `text` is the whole result, for copying and quoting; `excerpt` is the bounded form the
+        /// timeline draws. Both are built as the transcript is read, off the main actor.
+        case toolResult(text: String, excerpt: OutputExcerpt, isError: Bool)
     }
 
     public let id: Int
@@ -312,8 +314,10 @@ public struct SessionHistory: Sendable {
                 return .toolCall(name: name, detail: Self.summarise(input: block["input"]))
 
             case "tool_result":
+                let text = Self.flatten(block["content"])
                 return .toolResult(
-                    text: Self.flatten(block["content"]),
+                    text: text,
+                    excerpt: OutputExcerpt(text),
                     isError: block["is_error"] as? Bool ?? false)
 
             default:

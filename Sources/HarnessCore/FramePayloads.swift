@@ -75,6 +75,8 @@ public struct ToolResult: Sendable, Hashable {
     public let isError: Bool
     /// Flattened text form. The structured form, when present, is on `UserMessage.toolUseResult`.
     public let text: String
+    /// The bounded form the timeline draws. See `OutputExcerpt`.
+    public let excerpt: OutputExcerpt
 
     init(raw: JSONValue) {
         toolUseID = raw["tool_use_id"]?.stringValue ?? ""
@@ -87,6 +89,19 @@ public struct ToolResult: Sendable, Hashable {
         default:
             text = ""
         }
+        excerpt = OutputExcerpt(text)
+    }
+
+    /// Identity is the payload, not the excerpt derived from it: hashing an excerpt of a large
+    /// result would walk the same bytes a second time, and it can never disagree with its source.
+    public static func == (lhs: ToolResult, rhs: ToolResult) -> Bool {
+        lhs.toolUseID == rhs.toolUseID && lhs.isError == rhs.isError && lhs.text == rhs.text
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(toolUseID)
+        hasher.combine(isError)
+        hasher.combine(text)
     }
 }
 
@@ -139,17 +154,40 @@ public enum ToolUseResultSidecar: Sendable, Hashable {
 public struct ProcessOutput: Sendable, Hashable {
     public let stdout: String
     public let stderr: String
+    /// The bounded forms the timeline draws. Built here, on the decode queue, so no view ever pays
+    /// for them — see `OutputExcerpt`.
+    public let stdoutExcerpt: OutputExcerpt
+    public let stderrExcerpt: OutputExcerpt
     /// Authoritative cancellation signal — do not infer interruption from output text.
     public let interrupted: Bool
     public let isImage: Bool
     public let noOutputExpected: Bool
 
     init(raw: JSONValue) {
-        stdout = raw["stdout"]?.stringValue ?? ""
-        stderr = raw["stderr"]?.stringValue ?? ""
+        let out = raw["stdout"]?.stringValue ?? ""
+        let err = raw["stderr"]?.stringValue ?? ""
+        stdout = out
+        stderr = err
+        stdoutExcerpt = OutputExcerpt(out)
+        stderrExcerpt = OutputExcerpt(err)
         interrupted = raw["interrupted"]?.boolValue ?? false
         isImage = raw["isImage"]?.boolValue ?? false
         noOutputExpected = raw["noOutputExpected"]?.boolValue ?? false
+    }
+
+    /// Identity is the payload, not the excerpts derived from it. See `ToolResult`.
+    public static func == (lhs: ProcessOutput, rhs: ProcessOutput) -> Bool {
+        lhs.stdout == rhs.stdout && lhs.stderr == rhs.stderr
+            && lhs.interrupted == rhs.interrupted && lhs.isImage == rhs.isImage
+            && lhs.noOutputExpected == rhs.noOutputExpected
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(stdout)
+        hasher.combine(stderr)
+        hasher.combine(interrupted)
+        hasher.combine(isImage)
+        hasher.combine(noOutputExpected)
     }
 }
 

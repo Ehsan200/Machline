@@ -302,7 +302,9 @@ extension AppModel {
             case .thinking(let text): blocks.append("> \(text)")
             case .toolCall(let name, let detail):
                 blocks.append("### \(name)\n\n```\n\(detail)\n```")
-            case .toolResult(let text, let isError):
+            // The full text, not the excerpt: an export is read outside the app, where there is no
+            // pane to scroll and nothing to fall back to.
+            case .toolResult(let text, _, let isError):
                 blocks.append("\(isError ? "**Blocked**" : "Result")\n\n```\n\(text)\n```")
             }
         }
