@@ -105,6 +105,11 @@ private struct TerminalRepresentable: NSViewRepresentable {
         // Up-arrow in every new terminal recalled `cd '/some/project' && clear`, one keystroke
         // ahead of whatever the operator actually last ran. The child chdirs before it execs, so
         // there is nothing to hide with a `clear` either.
+        // `startProcess` forks, and a fork hands the child every descriptor this app has open —
+        // which at a busy moment is over a thousand, enough to push the shell's own descriptors
+        // past what `select` can name. fish dies there. See `DescriptorHygiene`.
+        DescriptorHygiene.closeOnExecAll()
+
         view.startProcess(
             executable: executable,
             args: LoginShell.loginArguments(for: executable),
